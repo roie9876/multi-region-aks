@@ -57,9 +57,15 @@ Israel Central mirrors the West Europe design: VPN Gateway and Firewall in the h
 - **Existing West Europe inspection can survive the cutover.** If the West Europe `GatewaySubnet` already routes the AKS spoke prefix to the firewall, and the AKS subnet still returns on-prem traffic through the same firewall, the West Europe firewall remains in the path. Inspect the effective return route: a more-specific BGP prefix can beat a `0.0.0.0/0` firewall route. This is compatible with **no new UDRs**, not with **zero UDRs**.
 - If **zero UDRs and mandatory private inspection** are both requirements, evaluate Standard Azure Virtual WAN with Azure Firewall and Private Traffic Routing Intent separately. Verify regional availability and scope. This uses managed virtual hubs and inter-hub routing rather than the standalone inter-region VPN design.
 
-## Address plan: one Azure `/16`
+## Address plan: a `/17` AKS spoke
 
-The reduced-size lab ranges below are illustrative and cover basic transit tests only. For the migration test, model the first AKS spoke as an existing `/17` whose route ownership moves between regions. The shared `/16` is an IPAM parent, not a VNet prefix spanning both regions. A `/16` contains only two non-overlapping `/17`s: confirm the actual CIDRs for all three spokes, both hubs and DNS spokes, and Sweden before assuming the full design fits.
+**An AKS spoke VNet can use a `/17`; AKS does not require a `/16`.** For the migration test, use `10.42.128.0/17` as the example spoke VNet address space and `10.42.129.0/24` as an example node subnet within it. Stage the same `/17` in Israel Central in isolation. Keep all four site-to-site VPN links up, verify that on-premises and GCP no longer learn the `/17` from West Europe, and then originate it from Israel Central.
+
+The shared `10.42.0.0/16` is an IPAM planning block, not a VNet spanning both regions. It contains only two non-overlapping `/17`s, so it cannot fit three `/17` spokes. Confirm the actual allocations for all spokes, hubs, DNS VNets, and Sweden.
+
+### Smaller examples for basic transit tests
+
+The `/24` spoke examples below are for basic transit tests only; they do not represent the `/17` cutover.
 
 | Allocation | Planning block | Example networks |
 |---|---|---|
@@ -68,7 +74,9 @@ The reduced-size lab ranges below are illustrative and cover basic transit tests
 | Emulated on-prem | Outside the Azure parent | `10.60.0.0/24` |
 | GCP VPC subnet | Outside the Azure parent | `10.70.0.0/24` |
 
-If a West Europe VNet already **has** the full `/16` configured, free the Israel range from the actual VNet address space first; unused addresses are still part of that VNet. An **advertised** `/16` summary is a separate issue: inventory it, start by testing the actual reachable prefixes, and introduce summaries only after checking ownership, route preference, and withdrawal behavior. Before building, check on-prem and GCP ranges, reserve hub space for the gateway, firewall, and dedicated resolver endpoint subnets, and size AKS node, pod, and service ranges for the CNI mode and expected scale. The illustrative `/24` is not a production sizing recommendation.
+If a connected West Europe VNet already **has** the full `/16` configured, resolve the overlap before connecting the new `/17` spoke; unused addresses are still part of that VNet. A `/16` **BGP summary** is a separate issue: check whether it would still attract traffic to West Europe after the `/17` is withdrawn.
+
+Check for overlap with on-premises and GCP ranges. Size the node, pod, and service ranges for expected scale and upgrade surge. With Azure CNI Overlay, pods use a separate CIDR; with Azure CNI Pod Subnet, pods consume VNet addresses. See [Azure VNet address-space rules](https://learn.microsoft.com/en-us/azure/virtual-network/virtual-networks-faq) and [AKS IP address planning](https://learn.microsoft.com/en-us/azure/aks/concepts-network-ip-address-planning).
 
 ## DNS with two resolvers
 
