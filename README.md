@@ -6,9 +6,23 @@ Start with the [lab runbook](./LAB-RUNBOOK.md) for the build order, expected res
 
 ## Starting and target topologies
 
-1. [Current state: West Europe transit](./architecture/01-current-west-europe.drawio)
-2. [Target transit: Israel Central, after the first AKS spoke cutover](./architecture/02-israel-central-first-spoke-cutover.drawio)
-3. [Animated BGP flow: move the same /17 from West Europe to Israel Central](./architecture/03-prefix-cutover-animation.svg) (open in a browser to play)
+### Current state: West Europe transit
+
+![West Europe connects to on-premises and GCP by site-to-site VPN and to Sweden Central by global VNet peering](./architecture/01-current-west-europe.png)
+
+[Editable Draw.io diagram](./architecture/01-current-west-europe.drawio)
+
+### Israel Central: first AKS spoke cutover
+
+![On-premises and GCP each connect by site-to-site VPN to both Israel Central and West Europe during migration](./architecture/02-israel-central-first-spoke-cutover.png)
+
+[Editable Draw.io diagram](./architecture/02-israel-central-first-spoke-cutover.drawio)
+
+### Animated BGP cutover
+
+![West Europe advertises the AKS spoke /17, withdraws it, and Israel Central advertises the same prefix to GCP and on-premises](./architecture/03-prefix-cutover-animation.svg)
+
+[Open the animation on its own](./architecture/03-prefix-cutover-animation.svg). All four VPN links stay up throughout the cutover.
 
 **Starting state:** West Europe connects to on-prem and a single GCP region using site-to-site (S2S) VPN with BGP. The hub VNet contains Azure VPN Gateway and Azure Firewall. A separate DNS spoke contains Azure DNS Private Resolver and is linked to Private DNS zones; three AKS spoke VNets peer with the hub. West Europe also has global VNet peering to Sweden Central for Azure Foundry Content Understanding. Azure workloads use private access: private AKS API/ingress and private endpoints for services including Foundry, Blob Storage, and Key Vault. Only Azure Firewall and VPN Gateway have public IPs.
 
