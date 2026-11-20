@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="590" viewBox="0 0 960 590" role="img" aria-labelledby="title description">
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="710" viewBox="0 0 960 710" role="img" aria-labelledby="title description">
   <title id="title">BGP cutover: West Europe to Israel Central</title>
-  <desc id="description">West Europe advertises the AKS spoke /17 to Google Cloud and on-premises. West Europe withdraws it, and both peers confirm the old route is gone. Israel Central then advertises the same /17 to both peers. All four site-to-site VPN links stay up. The timing is illustrative.</desc>
+  <desc id="description">Three AKS spokes start in West Europe, each with a distinct /17 advertised to Google Cloud and on-premises. Only AKS 1 moves: West Europe withdraws its /17 before the replacement in Israel Central advertises the same prefix. AKS 2 and 3 stay routed through West Europe. All four site-to-site VPN links stay up. Prefixes and timing are illustrative.</desc>
   <style>
     text { font-family: system-ui, sans-serif; fill: #102a43; }
     .title { font-size: 30px; font-weight: 700; }
@@ -9,11 +9,18 @@
     .note { font-size: 13px; fill: #334e68; }
     .node { fill: #ffffff; stroke: #9fb3c8; stroke-width: 1.5; }
     .hub { fill: #edf6ff; stroke: #79a5cf; }
+    .spoke { fill: #ffffff; stroke: #9fb3c8; }
+    .moving-spoke { fill: #edf6ff; stroke: #0078d4; }
+    .withdrawing-spoke { fill: #fff3e0; stroke: #9a5a00; }
     .vpn, .update { fill: none; stroke-width: 3; stroke-linejoin: round; }
     .vpn { stroke: #9fb3c8; }
     .update { stroke: #0078d4; marker-end: url(#advertise); }
     .withdraw { stroke: #9a5a00; marker-end: url(#withdraw); }
-    .pulse { stroke: #fff; stroke-width: 2; stroke-dasharray: 4 20; marker-end: none; animation: travel 0.9s linear infinite; }
+    .route-status { font-size: 13px; font-weight: 600; fill: #005a9e; }
+    .route-absent { fill: #794600; }
+    .route-token { fill: #005a9e; }
+    .withdraw-token { fill: #794600; }
+    .token-label { fill: #fff; font-family: monospace; font-size: 12px; font-weight: 700; }
     .phase-two, .phase-three { visibility: hidden; }
     .phase-one { animation: before 18s step-end infinite; }
     .phase-two { animation: cutover 18s step-end infinite; }
@@ -21,10 +28,9 @@
     @keyframes before { 0% { visibility: visible; } 33.333% { visibility: hidden; } }
     @keyframes cutover { 0% { visibility: hidden; } 33.333% { visibility: visible; } 61.111% { visibility: hidden; } }
     @keyframes after { 0% { visibility: hidden; } 61.111% { visibility: visible; } }
-    @keyframes travel { to { stroke-dashoffset: -24; } }
     @media (prefers-reduced-motion: reduce) {
-      .phase-one, .phase-two, .phase-three, .pulse { animation: none; }
-      .pulse { display: none; }
+      .phase-one, .phase-two, .phase-three { animation: none; }
+      .route-message { display: none; }
     }
   </style>
   <defs>
@@ -32,6 +38,13 @@
     <path id="west-onprem" d="M285 338 H330 V410 H375"/>
     <path id="israel-gcp" d="M675 302 H630 V235 H585"/>
     <path id="israel-onprem" d="M675 338 H630 V410 H585"/>
+    <g id="prefix-token">
+      <rect x="-63" y="-25" width="126" height="22" rx="6"/>
+      <text class="token-label" x="0" y="-10" text-anchor="middle">10.42.128.0/17</text>
+    </g>
+    <text id="via-west" class="route-status" text-anchor="middle">10.42.128.0/17 via West Europe</text>
+    <text id="route-absent" class="route-status route-absent" text-anchor="middle">10.42.128.0/17 withdrawn</text>
+    <text id="via-israel" class="route-status" text-anchor="middle">10.42.128.0/17 via Israel Central</text>
     <marker id="advertise" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
       <path d="M0 0 L8 4 L0 8 Z" fill="#0078d4"/>
     </marker>
@@ -39,9 +52,9 @@
       <path d="M0 0 L8 4 L0 8 Z" fill="#9a5a00"/>
     </marker>
   </defs>
-  <rect x="1" y="1" width="958" height="588" rx="18" fill="#f7fafc" stroke="#bcccdc"/>
-  <text class="title" x="36" y="50">Moving the AKS spoke /17</text>
-  <text class="body" x="36" y="78">BGP control plane only: arrows show routing updates, not application traffic.</text>
+  <rect x="1" y="1" width="958" height="708" rx="18" fill="#f7fafc" stroke="#bcccdc"/>
+  <text class="title" x="36" y="50">Moving one of three AKS spokes</text>
+  <text class="body" x="36" y="78">Follow the BGP update for 10.42.128.0/17. The moving label is not application traffic.</text>
   <rect x="36" y="105" width="888" height="77" rx="10" fill="#eaf1f8"/>
 
   <g class="vpn">
@@ -58,44 +71,85 @@
     <text class="heading" x="800" y="313" text-anchor="middle">Israel Central</text>
     <text class="body" x="800" y="338" text-anchor="middle">Azure VPN Gateway</text>
     <rect class="node" x="375" y="208" width="210" height="54" rx="10"/>
-    <text class="heading" x="480" y="241" text-anchor="middle">Google Cloud (GCP)</text>
+    <text class="heading" x="480" y="230" text-anchor="middle">Google Cloud (GCP)</text>
     <rect class="node" x="375" y="383" width="210" height="54" rx="10"/>
-    <text class="heading" x="480" y="416" text-anchor="middle">On-premises</text>
+    <text class="heading" x="480" y="405" text-anchor="middle">On-premises</text>
+  </g>
+
+  <g id="west-staying-spokes">
+    <rect class="spoke" x="36" y="412" width="249" height="34" rx="6"/>
+    <text class="body" x="48" y="434">AKS 2: 10.43.0.0/17</text>
+    <rect class="spoke" x="36" y="454" width="249" height="34" rx="6"/>
+    <text class="body" x="48" y="476">AKS 3: 10.43.128.0/17</text>
+    <text class="note" x="36" y="512">AKS 2 and 3 stay in West Europe.</text>
   </g>
 
   <g id="before" class="phase-one">
-    <text class="heading" x="56" y="136">1 / Before cutover: West Europe advertises the /17</text>
-    <text class="body" x="56" y="161">GCP and on-premises learn the route from West Europe.</text>
+    <text class="heading" x="56" y="136">1 / West Europe advertises 10.42.128.0/17 to both peers</text>
+    <text class="body" x="56" y="161">AKS 1, 2 and 3 all start in West Europe. Follow AKS 1's route.</text>
+    <g id="west-aks1">
+      <rect class="moving-spoke" x="36" y="370" width="249" height="34" rx="6"/>
+      <text class="body" x="48" y="392">AKS 1: 10.42.128.0/17</text>
+    </g>
     <use href="#west-gcp" class="update"/>
     <use href="#west-onprem" class="update"/>
-    <use href="#west-gcp" class="update pulse"/>
-    <use href="#west-onprem" class="update pulse"/>
+    <use href="#via-west" x="480" y="251"/>
+    <use href="#via-west" x="480" y="426"/>
+    <use href="#prefix-token" class="route-message route-token">
+      <animateMotion dur="3s" repeatCount="indefinite"><mpath href="#west-gcp"/></animateMotion>
+    </use>
+    <use href="#prefix-token" class="route-message route-token">
+      <animateMotion dur="3s" repeatCount="indefinite"><mpath href="#west-onprem"/></animateMotion>
+    </use>
   </g>
   <g id="cutover" class="phase-two">
-    <text class="heading" x="56" y="136">2 / Cutover: West Europe withdraws the /17</text>
-    <text class="body" x="56" y="161">Confirm the old route is gone at both peers before advertising it from Israel Central.</text>
+    <text class="heading" x="56" y="136">2 / West Europe withdraws 10.42.128.0/17 from both peers</text>
+    <text class="body" x="56" y="161">Wait for both peers to lose this route. AKS 2 and 3 stay advertised.</text>
+    <g id="west-aks1-withdrawing">
+      <rect class="withdrawing-spoke" x="36" y="370" width="249" height="34" rx="6"/>
+      <text class="note" x="48" y="392">AKS 1: 10.42.128.0/17 withdrawing</text>
+    </g>
     <use href="#west-gcp" class="update withdraw"/>
     <use href="#west-onprem" class="update withdraw"/>
-    <use href="#west-gcp" class="update withdraw pulse"/>
-    <use href="#west-onprem" class="update withdraw pulse"/>
+    <use href="#route-absent" x="480" y="251"/>
+    <use href="#route-absent" x="480" y="426"/>
+    <use href="#prefix-token" class="route-message withdraw-token">
+      <animateMotion dur="3s" repeatCount="indefinite"><mpath href="#west-gcp"/></animateMotion>
+    </use>
+    <use href="#prefix-token" class="route-message withdraw-token">
+      <animateMotion dur="3s" repeatCount="indefinite"><mpath href="#west-onprem"/></animateMotion>
+    </use>
   </g>
   <g id="after" class="phase-three">
-    <text class="heading" x="56" y="136">3 / After cutover: Israel Central advertises the same /17</text>
-    <text class="body" x="56" y="161">Verify both peers select the route from Israel Central and return traffic works.</text>
+    <text class="heading" x="56" y="136">3 / Israel Central advertises the same 10.42.128.0/17</text>
+    <text class="body" x="56" y="161">Both peers now learn AKS 1 from Israel Central; AKS 2 and 3 still use West Europe.</text>
+    <g id="israel-aks1">
+      <rect class="moving-spoke" x="675" y="370" width="249" height="34" rx="6"/>
+      <text class="body" x="687" y="392">AKS 1: 10.42.128.0/17</text>
+      <text class="note" x="675" y="428">Replacement cluster now active.</text>
+    </g>
+    <use href="#west-gcp" class="update"/>
+    <use href="#west-onprem" class="update"/>
     <use href="#israel-gcp" class="update"/>
     <use href="#israel-onprem" class="update"/>
-    <use href="#israel-gcp" class="update pulse"/>
-    <use href="#israel-onprem" class="update pulse"/>
+    <use href="#via-israel" x="480" y="251"/>
+    <use href="#via-israel" x="480" y="426"/>
+    <use href="#prefix-token" class="route-message route-token">
+      <animateMotion dur="3s" repeatCount="indefinite"><mpath href="#israel-gcp"/></animateMotion>
+    </use>
+    <use href="#prefix-token" class="route-message route-token">
+      <animateMotion dur="3s" repeatCount="indefinite"><mpath href="#israel-onprem"/></animateMotion>
+    </use>
   </g>
 
-  <path class="vpn" d="M36 473 H60"/>
-  <text class="body" x="70" y="478">S2S VPN + BGP stays up on all four links</text>
-  <path d="M401 473 H425" stroke="#0078d4" stroke-width="3" marker-end="url(#advertise)"/>
-  <text class="body" x="435" y="478">/17 advertisement</text>
-  <path d="M603 473 H627" stroke="#9a5a00" stroke-width="3" marker-end="url(#withdraw)"/>
-  <text class="body" x="637" y="478">/17 withdrawal</text>
-  <path d="M36 498 H924" stroke="#bcccdc"/>
-  <text class="body" x="36" y="524">West Europe advertises &#8594; West Europe withdraws &#8594; Israel Central advertises</text>
-  <text class="note" x="36" y="548">Timing is illustrative; wait for route verification, not a timer. The /17 can be temporarily unreachable.</text>
-  <text class="note" x="36" y="570">Other prefixes and inter-region links are outside this view.</text>
+  <path class="vpn" d="M36 551 H60"/>
+  <text class="body" x="70" y="556">S2S VPN + BGP stays up on all four links</text>
+  <path d="M401 551 H425" stroke="#0078d4" stroke-width="3" marker-end="url(#advertise)"/>
+  <text class="body" x="435" y="556">Advertised /17 routes</text>
+  <path d="M650 551 H674" stroke="#9a5a00" stroke-width="3" marker-end="url(#withdraw)"/>
+  <text class="body" x="684" y="556">AKS 1 /17 withdrawal</text>
+  <path d="M36 583 H924" stroke="#bcccdc"/>
+  <text class="body" x="36" y="613">Three /17s in West Europe &#8594; withdraw AKS 1 only &#8594; two in West Europe, one in Israel Central</text>
+  <text class="note" x="36" y="642">Prefixes and timing are illustrative. Wait for route verification, not a timer.</text>
+  <text class="note" x="36" y="667">AKS 1's /17 can be temporarily unreachable. Inter-region links are outside this view.</text>
 </svg>

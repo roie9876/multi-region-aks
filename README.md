@@ -20,11 +20,11 @@ Start with the [lab runbook](./LAB-RUNBOOK.md) for the build order, expected res
 
 ### Animated BGP cutover
 
-![West Europe advertises the AKS spoke /17, withdraws it, and Israel Central advertises the same prefix to GCP and on-premises](./architecture/03-prefix-cutover-animation.svg)
+![Three AKS spokes start in West Europe. Israel Central takes over the first spoke's /17 advertisement to GCP and on-premises. The other two /17s stay in West Europe.](./architecture/03-prefix-cutover-animation.svg)
 
-[Open the animation on its own](./architecture/03-prefix-cutover-animation.svg). All four VPN links stay up throughout the cutover.
+[Open the animation on its own](./architecture/03-prefix-cutover-animation.svg). Follow `10.42.128.0/17` to both peers and watch their route labels change from West Europe to withdrawn to Israel Central. All four VPN links stay up.
 
-**Starting state:** West Europe connects to on-prem and a single GCP region using site-to-site (S2S) VPN with BGP. The hub VNet contains Azure VPN Gateway and Azure Firewall. A separate DNS spoke contains Azure DNS Private Resolver and is linked to Private DNS zones; three AKS spoke VNets peer with the hub. West Europe also has global VNet peering to Sweden Central for Azure Foundry Content Understanding. Azure workloads use private access: private AKS API/ingress and private endpoints for services including Foundry, Blob Storage, and Key Vault. Only Azure Firewall and VPN Gateway have public IPs.
+**Starting state:** West Europe connects to on-prem and a single GCP region using site-to-site (S2S) VPN with BGP. The hub VNet contains Azure VPN Gateway, Azure Firewall, and F5 ingress. All public application DNS records resolve to the West Europe F5 ingress frontend. A separate DNS spoke contains Azure DNS Private Resolver and is linked to Private DNS zones; three AKS spoke VNets peer with the hub. West Europe also has global VNet peering to Sweden Central for Azure Foundry Content Understanding. The AKS API and backends stay private, and Foundry, Blob Storage, and Key Vault use private endpoints.
 
 **During migration:**
 
@@ -35,7 +35,7 @@ Israel Central --- proposed VNet-to-VNet VPN / BGP --- West Europe
 West Europe --- Global VNet peering --- Sweden Central
 ```
 
-Israel Central mirrors the West Europe design: VPN Gateway and Firewall in the hub, a separate DNS spoke with Private Resolver, and three AKS spokes by the end of the migration. On-prem and GCP each connect directly to **both Azure hubs** throughout the migration. Consider retiring the direct West Europe links only after the migration is complete and the remaining paths have been validated. One logical site connection can still have multiple tunnels for redundancy.
+Israel Central mirrors the West Europe design: VPN Gateway, Firewall, and a new F5 ingress in the hub, a separate DNS spoke with Private Resolver, and three AKS spokes by the end of the migration. On-prem and GCP each connect directly to **both Azure hubs** throughout the migration. Consider retiring the direct West Europe links only after the migration is complete and the remaining paths have been validated. One logical site connection can still have multiple tunnels for redundancy.
 
 ### Inter-region link and Sweden decision
 
@@ -90,6 +90,7 @@ Link the actual private AKS API DNS zones to the resolver VNets that need to ans
 
 ## Application ingress and egress
 
+- **Public ingress:** Keep public application records on the West Europe F5 until each app is ready to cut over. Validate the Israel Central F5 frontend for the app hostname, TLS, and reachability to the private AKS backend before changing its public DNS record. Leave apps that have not migrated on the West Europe F5. The `/17` BGP cutover does not update public DNS.
 - **Private ingress:** Start with a simple HTTPS echo service in each cluster behind an Azure internal load balancer. Add a private Gateway/Ingress frontend later if host-based routing is part of the test; use its actual private frontend IP for the DNS record. Return a region identifier from each backend to prove which region served the request. Test the application endpoint separately from the private AKS API.
 - **Private egress:** Test pods in both regions reaching controlled on-prem and GCP endpoints. Record the observed source IP; for example, Azure CNI Overlay SNATs traffic leaving the cluster to the node IP. Check routes, return paths, and firewall logs separately for each direction.
 - **Internet egress:** Pick and document the AKS outbound type. If the lab must match the no-public-workload-IP constraint, do not use a `loadBalancer` outbound baseline that creates a public IP; use the approved egress path or a supported network-isolated configuration. If preserving firewall-controlled egress via AKS `userDefinedRouting`, document the required route separately from BGP transit. Confirm AKS dependencies remain reachable and measure the observed source IP for any approved egress.
