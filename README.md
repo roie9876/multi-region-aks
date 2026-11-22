@@ -51,11 +51,31 @@ Israel Central mirrors the West Europe design: VPN Gateway, Firewall, and a new 
 
 ## Routing and inspection
 
-- Use route-based VPNs with BGP for the four external links and the proposed inter-region VPN. Assign distinct ASNs to adjacent peers, including the two Azure gateways; verify that no reused ASN elsewhere in the transit path causes a route rejection. Enable gateway transit on hub-to-spoke peerings and remote gateway use on the spokes that need propagated routes. For GCP, use Cloud Router and follow Google's HA VPN design for Azure.
-- West Europe advertises its reachable spoke VNet prefixes to Israel Central. Israel Central re-advertises them to on-prem and GCP. In reverse, Israel Central advertises the prefixes it learns from those peers to West Europe. **No UDR is required for this exchange.** Check actual advertised and accepted prefixes on each link; BGP being up is not proof of end-to-end reachability.
-- **BGP-only transit does not insert either firewall.** With no routes steering the flow to a firewall, the path to a West Europe AKS private frontend is `on-prem -> Israel VPN gateway -> West Europe VPN gateway -> AKS spoke`. Having two firewalls deployed does not change that path.
-- **Existing West Europe inspection can survive the cutover.** If the West Europe `GatewaySubnet` already routes the AKS spoke prefix to the firewall, and the AKS subnet still returns on-prem traffic through the same firewall, the West Europe firewall remains in the path. Inspect the effective return route: a more-specific BGP prefix can beat a `0.0.0.0/0` firewall route. This is compatible with **no new UDRs**, not with **zero UDRs**.
-- If **zero UDRs and mandatory private inspection** are both requirements, evaluate Standard Azure Virtual WAN with Azure Firewall and Private Traffic Routing Intent separately. Verify regional availability and scope. This uses managed virtual hubs and inter-hub routing rather than the standalone inter-region VPN design.
+### End-to-end BGP paths
+
+Use route-based VPNs with BGP on all four external links and the proposed Israel–West Europe VNet-to-VNet VPN. Use distinct ASNs on the two Azure hubs and check for ASN reuse in transit. For AKS and DNS spokes that need gateway routes, enable **Allow gateway transit** on the hub side and **Use remote gateways** on the spoke side. Keep BGP route propagation enabled for the BGP-only baseline. Use Cloud Router for GCP.
+
+| Flow | Intended path during migration |
+|---|---|
+| On-premises or GCP to AKS 2 or 3 | Prefer the direct West Europe tunnel: site -> West Europe VPN Gateway -> local AKS spoke. Return to the site through the same hub. |
+| On-premises or GCP to AKS 1 (`10.42.128.0/17`) | Before cutover, use the direct West Europe tunnel. Withdraw only AKS 1's route and verify its removal at both sites before Israel Central originates the same `/17`. Then prefer the direct Israel tunnel in both directions. All four VPN links stay up. |
+| Israel Central AKS to West Europe AKS or DNS, and back | Source spoke -> local VPN Gateway -> inter-region VPN -> remote VPN Gateway -> destination spoke. Verify each hub learns the other hub's required spoke prefixes. Hub peering alone does not provide spoke-to-spoke transit. |
+| Israel Central AKS to the Sweden Foundry private endpoint, and back | Intended path: Israel hub -> inter-region VPN -> West Europe hub -> Sweden via existing Global VNet Peering. Verify that West Europe advertises the Sweden prefix, Israel learns it, and Sweden has a return route to Israel through supported gateway transit. Sweden has no BGP session. If those routes aren't present, design an explicit supported path before cutover. |
+
+After cutover, West Europe may still re-advertise an Israel-learned **transit path** to `10.42.128.0/17`; that is not the same as West Europe originating the old spoke route. Verify route selection at on-premises and GCP rather than assuming the direct path wins. Check for covering summaries, more-specific routes, unintended equal-cost paths, and asymmetry. Compare each gateway's advertised and learned routes with the effective next hops on the workload subnets.
+
+### Where to put UDRs
+
+**No UDR is needed for BGP exchange or basic reachability** when the expected routes propagate correctly. BGP does not insert Azure Firewall. For an inspected flow, configure the forward and return paths through the same stateful firewall. See [Azure Firewall hybrid routing](https://learn.microsoft.com/en-us/azure/firewall/tutorial-hybrid-portal-policy) and [Azure route selection](https://learn.microsoft.com/en-us/azure/virtual-network/virtual-networks-udr-overview).
+
+| Where | UDR when inspection is required |
+|---|---|
+| Destination hub's `GatewaySubnet` | For VPN-to-local-spoke inspection, route each **local destination** spoke prefix to the local Azure Firewall private IP (`Virtual appliance`). Keep gateway route propagation enabled; do not put a `0.0.0.0/0` UDR here. Remove or adjust any stale West Europe local-spoke UDR for `10.42.128.0/17` and add the Israel equivalent if inspection is required. |
+| AKS or DNS spoke subnet carrying the return flow | Route the relevant on-premises, GCP, or remote-region destination prefixes to the **local** firewall. With BGP propagation enabled, use specific routes that match the effective BGP prefixes: a `0.0.0.0/0` UDR does not beat a more-specific BGP route. Apply the route table to the subnet that actually carries the traffic, which depends on the AKS networking mode. |
+| Azure Firewall subnet | No blanket UDR for the hybrid transit baseline. Verify that the firewall can reach local spokes and that it learns the required remote prefixes via the gateway. Treat internet forced tunneling separately. |
+| F5 and private endpoints | VPN UDRs do not automatically inspect these flows. Verify the F5 backend and return next hops, accounting for proxying or SNAT. For private endpoint traffic, check effective routes and route-table network policies before adding overrides. |
+
+Example: `on-premises -> Israel VPN Gateway -> Israel Azure Firewall -> AKS 1`; the response must return `AKS 1 -> same firewall -> Israel VPN Gateway -> on-premises`. For cross-region inspection, decide which firewall inspects the flow and validate both directions before extending the UDR pattern. If mandatory private inspection without workload UDRs is required, evaluate Standard Azure Virtual WAN with Azure Firewall and Private Traffic Routing Intent separately.
 
 ## Address plan: a `/17` AKS spoke
 
@@ -78,15 +98,29 @@ If a connected West Europe VNet already **has** the full `/16` configured, resol
 
 Check for overlap with on-premises and GCP ranges. Size the node, pod, and service ranges for expected scale and upgrade surge. With Azure CNI Overlay, pods use a separate CIDR; with Azure CNI Pod Subnet, pods consume VNet addresses. See [Azure VNet address-space rules](https://learn.microsoft.com/en-us/azure/virtual-network/virtual-networks-faq) and [AKS IP address planning](https://learn.microsoft.com/en-us/azure/aks/concepts-network-ip-address-planning).
 
-## DNS with two resolvers
+## DNS across West Europe, Israel Central, and Sweden Central
+
+Deploy one Azure DNS Private Resolver in the West Europe DNS spoke and another in Israel Central's DNS spoke. Link **the same Private DNS zone resources** to both resolver VNets: private application zones, the relevant AKS private API zones, and the Private Link zones for Foundry, Blob Storage, and Key Vault. Both resolvers can return the private IP for Sweden Foundry without forwarding the DNS query to Sweden. For Private Link, follow the [service-specific conditional forwarding guidance](https://learn.microsoft.com/en-us/azure/private-link/private-endpoint-dns-integration); where required, forward the service's **public DNS zone** so Azure can follow the public-to-private CNAME chain.
+
+### Migrate the existing on-premises forwarder
+
+1. **Today:** Clients query the on-premises forwarder, which sends matching Azure queries to the West Europe inbound resolver IP. Leave that path in place.
+2. **Before cutover:** Deploy the Israel inbound endpoint and link the zones to both resolver VNets. Query each endpoint directly over its regional tunnel for names in all three regions. Verify the returned IP and test the actual service separately. Don't add Israel as a target until it answers correctly; an `NXDOMAIN` reply does not reliably trigger failover.
+3. **During migration:** Add Israel Central as a second target for the same conditional forwarders. Prefer West Europe initially if the forwarder supports it; otherwise test how it selects and retries targets. Test UDP and TCP 53 over both paths and simulate losing each endpoint in turn. Either healthy resolver should answer for all three regions.
+4. **Per application:** If the private VIP stays the same, BGP changes the path without requiring an app DNS change. If the VIP or AKS private API endpoint changes, update the applicable private record and allow for TTL and negative caching. Moving public app records to the Israel F5 is separate.
+5. **After migration:** Keep both targets if regional DNS failover is required. If the West Europe VPN is retired later, first prove its inbound endpoint is reachable through an independent alternate path, or replace or remove that target.
+
+### How VMs and pods resolve remote resources
 
 | Query direction | Design |
 |---|---|
-| Azure workloads -> Azure private names | Use regional resolution. Either link zones directly to the spokes using Azure-provided DNS, or direct spoke DNS to its regional inbound endpoint in the centralized pattern. Link shared zones to **both** resolver VNets so both endpoints answer consistently. Do not duplicate the same shared zone. |
-| Azure workloads -> on-prem or GCP names | Create a forwarding ruleset per region and use its outbound endpoint to reach the authoritative on-prem DNS servers or GCP Cloud DNS inbound entry points. Link the ruleset to the VNets doing the lookups in that region (the regional hub in the centralized DNS pattern). |
+| Israel Central VMs and AKS pods -> West Europe or Sweden private names | Configure the workload VNets to use the Israel inbound endpoint as custom DNS. Pods use CoreDNS; external names follow the cluster's upstream DNS to that endpoint. The linked zones return the West Europe or Sweden private IP. |
+| West Europe VMs and AKS pods -> Israel or Sweden private names | Use the West Europe inbound endpoint in the same way. Shared zones return Israel and Sweden records locally. |
+| Sweden workloads -> West Europe or Israel private names | Use Azure-provided DNS and link the required private zones to the Sweden workload VNet. Alternatively, configure Sweden to use the West Europe inbound endpoint over verified peering reachability. Sweden does not need its own resolver for shared Azure private zones. |
+| Azure workloads -> on-prem or GCP names | Link an outbound forwarding ruleset to each resolver's DNS spoke VNet in this centralized design. Forward only the relevant suffixes to on-premises DNS servers or GCP Cloud DNS inbound forwarding IPs. Sweden needs a reachable centralized resolver path for these forwarded namespaces; direct zone links alone only provide the linked zones. |
 | On-prem or GCP -> Azure private names | Configure conditional forwarding for the applicable Azure suffixes to reachable Azure inbound endpoints. For default GCP Cloud DNS private forwarding, verify the `35.199.192.0/19` return route and UDP/TCP 53 policy. |
 
-Link the actual private AKS API DNS zones to the resolver VNets that need to answer API queries. Treat API DNS separately from application names such as `app-we.lab.example` and `app-il.lab.example`. Avoid forwarding loops: don't forward a zone from a resolver back to its own inbound endpoint. Two resolvers provide two DNS endpoints, **not two independent network paths**: after cutover, on-prem loses access to both through an Israel hub outage unless a separate West Europe path is retained.
+Avoid duplicate private zones for the same namespace and don't forward queries back to the same inbound endpoint. Use shared application FQDNs across clusters rather than another cluster's `*.svc.cluster.local` names. Test from an on-premises client and from a pod in each AKS region: first DNS resolution and the returned IP, then HTTPS/TLS and the return path. A correct answer does not prove that BGP, UDRs, or firewalls allow the connection.
 
 ## Application ingress and egress
 

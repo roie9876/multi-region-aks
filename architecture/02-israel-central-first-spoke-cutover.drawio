@@ -37,8 +37,11 @@
         <mxCell id="il-fw" parent="il-fwsub" style="image;html=1;aspect=fixed;verticalLabelPosition=bottom;verticalAlign=top;fontSize=14;image=img/lib/azure2/networking/Firewalls.svg;" value="Azure Firewall" vertex="1">
           <mxGeometry height="46" width="46" x="44.5" y="28" as="geometry" />
         </mxCell>
-        <mxCell id="il-f5" parent="il-hub" style="rounded=1;whiteSpace=wrap;html=1;fontSize=14;fillColor=#ffe6cc;strokeColor=#d79b00;strokeWidth=2;" value="F5 ingress&lt;br&gt;Public app frontend&lt;br&gt;Planned" vertex="1">
+        <mxCell id="il-f5" parent="il-hub" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=bottom;spacingBottom=8;fontSize=13;fillColor=#ffe6cc;strokeColor=#d79b00;strokeWidth=2;" value="F5 ingress&lt;br&gt;Public app frontend&lt;br&gt;Planned" vertex="1">
           <mxGeometry height="106" width="125" x="425" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="il-f5-icon" parent="il-f5" style="ellipse;aspect=fixed;html=1;fillColor=#c62532;strokeColor=none;fontColor=#ffffff;fontStyle=1;fontSize=17;" value="F5" vertex="1">
+          <mxGeometry height="34" width="34" x="45.5" y="10" as="geometry" />
         </mxCell>
         <mxCell id="il-peers" parent="il" style="rounded=1;html=1;fontSize=14;fillColor=#f5f5f5;strokeColor=#64748b;" value="&lt;div&gt;&lt;span style=&quot;background-color: transparent; color: light-dark(#000000, var(--ge-light-color, #ffffff));&quot;&gt;VNet peerings&lt;/span&gt;&lt;/div&gt;" vertex="1">
           <mxGeometry height="35" width="390" x="110" y="247" as="geometry" />
@@ -79,8 +82,11 @@
         <mxCell id="we-fw" parent="we-fwsub" style="image;html=1;aspect=fixed;verticalLabelPosition=bottom;verticalAlign=top;fontSize=14;image=img/lib/azure2/networking/Firewalls.svg;" value="Azure Firewall" vertex="1">
           <mxGeometry height="46" width="46" x="44.5" y="28" as="geometry" />
         </mxCell>
-        <mxCell id="we-f5" parent="we-hub" style="rounded=1;whiteSpace=wrap;html=1;fontSize=14;fillColor=#ffe6cc;strokeColor=#d79b00;strokeWidth=2;" value="F5 ingress&lt;br&gt;Public app frontend&lt;br&gt;Existing" vertex="1">
+        <mxCell id="we-f5" parent="we-hub" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=bottom;spacingBottom=8;fontSize=13;fillColor=#ffe6cc;strokeColor=#d79b00;strokeWidth=2;" value="F5 ingress&lt;br&gt;Public app frontend&lt;br&gt;Existing" vertex="1">
           <mxGeometry height="106" width="125" x="425" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="we-f5-icon" parent="we-f5" style="ellipse;aspect=fixed;html=1;fillColor=#c62532;strokeColor=none;fontColor=#ffffff;fontStyle=1;fontSize=17;" value="F5" vertex="1">
+          <mxGeometry height="34" width="34" x="45.5" y="10" as="geometry" />
         </mxCell>
         <mxCell id="we-peers" parent="we" style="rounded=1;html=1;fontSize=14;fillColor=#f5f5f5;strokeColor=#64748b;" value="VNet peerings" vertex="1">
           <mxGeometry height="35" width="390" x="110" y="247" as="geometry" />
