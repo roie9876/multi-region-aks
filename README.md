@@ -8,6 +8,12 @@ The deployment lab uses two West Europe AKS spokes, Azure Firewall in both hubs,
 
 ## Starting and target topologies
 
+### Deployed lab snapshot
+
+![Deployed Azure AKS migration lab topology with illustrative private addresses](./architecture/05-current-lab.png)
+
+The public snapshot uses illustrative IP addresses, not live endpoints.
+
 ### Current state: West Europe transit
 
 ![West Europe connects to on-premises and GCP by site-to-site VPN and to Sweden Central by global VNet peering](./architecture/01-current-west-europe.png)
