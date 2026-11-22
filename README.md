@@ -10,9 +10,9 @@ The deployment lab uses two West Europe AKS spokes, Azure Firewall in both hubs,
 
 ### Deployed lab snapshot
 
-![Deployed Azure AKS migration lab topology with illustrative private addresses](./architecture/05-current-lab.png)
+![Deployed Azure AKS migration lab topology with actual VNet ranges, including the on-premises emulator at 10.60.0.0/16](./architecture/05-current-lab.png)
 
-The public snapshot uses illustrative IP addresses, not live endpoints.
+The snapshot shows deployed network ranges and private addresses already documented in this repository. Unpublished endpoint addresses are omitted.
 
 ### Current state: West Europe transit
 
