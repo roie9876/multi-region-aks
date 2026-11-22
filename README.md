@@ -2,7 +2,9 @@
 
 Test what changes when a hybrid environment with one Azure region and one GCP region adds a second Azure region. The lab separates four questions: **Can traffic reach the destination? Does Azure Firewall actually inspect it? Does DNS return the right address? Where does AKS ingress and egress traffic flow?**
 
-Start with the [lab runbook](./LAB-RUNBOOK.md) for the build order, expected results, and rollback tests. This repository documents the lab; it does not provision infrastructure.
+Start with the [Azure-only lab bill of materials](./LAB-BOM.md) for the proposed services and the [lab runbook](./LAB-RUNBOOK.md) for the build order, expected results, and rollback tests. The [Terraform roots](./infra) cover the runner and private state backend, West Europe, Sweden Central, the emulators, and the baseline connections. Israel Central deployment is a later phase.
+
+The deployment lab uses two West Europe AKS spokes, Azure Firewall in both hubs, and a persistent Terraform runner in Sweden Central. The topology diagrams below describe the broader migration design; F5 and the third spoke are not required for this lab.
 
 ## Starting and target topologies
 

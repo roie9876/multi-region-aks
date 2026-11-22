@@ -1,0 +1,25 @@
+#cloud-config
+package_update: true
+packages:
+  - nginx
+write_files:
+  - path: /var/www/html/index.html
+    permissions: "0644"
+    content: |
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <title>${site_heading}</title>
+        <style>
+          body { font-family: sans-serif; margin: 4rem; }
+          h1 { font-size: 4rem; }
+        </style>
+      </head>
+      <body>
+        <h1>${site_heading}</h1>
+      </body>
+      </html>
+runcmd:
+  - ["systemctl", "enable", "--now", "nginx"]
+  - ["systemctl", "restart", "nginx"]

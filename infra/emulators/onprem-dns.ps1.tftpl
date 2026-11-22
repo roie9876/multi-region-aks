@@ -1,0 +1,73 @@
+$ErrorActionPreference = "Stop"
+
+$ResolverIp = "${resolver_ip}"
+$DnsIp      = "${dns_private_ip}"
+$ClientIp   = "${client_private_ip}"
+$WebIp      = "${web_private_ip}"
+$RouterIp   = "${bgp_peer_ip}"
+
+Install-WindowsFeature -Name DNS -IncludeManagementTools | Out-Null
+Import-Module DnsServer
+
+# Prevent fallback to Azure-provided DNS (168.63.129.16) or public root hints.
+$currentForwarders = (Get-DnsServerForwarder).IPAddress
+if ($currentForwarders) {
+  foreach ($ip in $currentForwarders) {
+    Remove-DnsServerForwarder -IPAddress $ip.IPAddressToString -Force
+  }
+}
+Get-DnsServerRootHint | Remove-DnsServerRootHint -Force -ErrorAction SilentlyContinue
+Set-DnsServerRecursion -Enable $true -AdditionalTimeout 4
+
+# Authoritative zone for reverse hybrid DNS testing from Azure Private Resolver outbound endpoints.
+$localZone = "onprem.lab.internal"
+if (-not (Get-DnsServerZone -Name $localZone -ErrorAction SilentlyContinue)) {
+  Add-DnsServerPrimaryZone -Name $localZone -ZoneFile "$localZone.dns" -DynamicUpdate None
+}
+$records = @{
+  "dns"    = $DnsIp
+  "client" = $ClientIp
+  "web"    = $WebIp
+  "router" = $RouterIp
+}
+foreach ($entry in $records.GetEnumerator()) {
+  if (Get-DnsServerResourceRecord -ZoneName $localZone -Name $entry.Key -RRType A -ErrorAction SilentlyContinue) {
+    Remove-DnsServerResourceRecord -ZoneName $localZone -Name $entry.Key -RRType A -Force
+  }
+  Add-DnsServerResourceRecordA -ZoneName $localZone -Name $entry.Key -IPv4Address $entry.Value -TimeToLive 00:05:00
+}
+
+# Conditional forwarders over the VPN tunnel to the West Europe Private Resolver inbound endpoint only.
+$forwardZones = @(
+  "blob.core.windows.net",
+  "privatelink.blob.core.windows.net",
+  "vaultcore.azure.net",
+  "privatelink.vaultcore.azure.net",
+  "azmk8s.io",
+  "azure.lab.internal",
+  "services.ai.azure.com",
+  "privatelink.services.ai.azure.com",
+  "openai.azure.com",
+  "privatelink.openai.azure.com",
+  "cognitiveservices.azure.com",
+  "privatelink.cognitiveservices.azure.com"
+)
+foreach ($zone in $forwardZones) {
+  if (Get-DnsServerZone -Name $zone -ErrorAction SilentlyContinue) {
+    Remove-DnsServerZone -Name $zone -Force
+  }
+  Add-DnsServerConditionalForwarderZone -Name $zone -MasterServers @($ResolverIp) -UseRecursion:$false -ForwarderTimeout 5
+}
+
+if (-not (Get-NetFirewallRule -Name "Allow-Lab-DNS-UDP" -ErrorAction SilentlyContinue)) {
+  New-NetFirewallRule -Name "Allow-Lab-DNS-UDP" -DisplayName "Allow Lab DNS UDP 53" -Direction Inbound -Protocol UDP -LocalPort 53 -Action Allow | Out-Null
+}
+if (-not (Get-NetFirewallRule -Name "Allow-Lab-DNS-TCP" -ErrorAction SilentlyContinue)) {
+  New-NetFirewallRule -Name "Allow-Lab-DNS-TCP" -DisplayName "Allow Lab DNS TCP 53" -Direction Inbound -Protocol TCP -LocalPort 53 -Action Allow | Out-Null
+}
+if (-not (Get-NetFirewallRule -Name "Allow-Lab-ICMPv4" -ErrorAction SilentlyContinue)) {
+  New-NetFirewallRule -Name "Allow-Lab-ICMPv4" -DisplayName "Allow Lab ICMPv4 Echo" -Direction Inbound -Protocol ICMPv4 -IcmpType 8 -Action Allow | Out-Null
+}
+
+Clear-DnsServerCache -Force
+Restart-Service -Name DNS

@@ -1,0 +1,154 @@
+#cloud-config
+package_update: true
+packages:
+  - bind9
+  - bind9utils
+  - bind9-dnsutils
+write_files:
+  - path: /etc/bind/named.conf.options
+    permissions: "0644"
+    content: |
+      acl "lab_networks" {
+        127.0.0.0/8;
+        10.42.0.0/16;
+        10.43.0.0/16;
+        10.44.0.0/16;
+        10.60.0.0/16;
+        10.70.0.0/16;
+      };
+
+      options {
+        directory "/var/cache/bind";
+        listen-on port 53 { 127.0.0.1; ${dns_private_ip}; };
+        listen-on-v6 { none; };
+        allow-query { lab_networks; };
+        allow-recursion { lab_networks; };
+        recursion yes;
+        dnssec-validation no;
+        empty-zones-enable yes;
+        // Unmatched names fail locally; specific forward zones override this.
+        forward only;
+        forwarders { 127.0.0.1 port 65534; };
+      };
+  - path: /etc/bind/db.gcp.lab.internal
+    permissions: "0644"
+    content: |
+      $TTL 300
+      @ IN SOA dns.gcp.lab.internal. hostmaster.gcp.lab.internal. (
+        2026112201 ; Serial
+        300        ; Refresh
+        60         ; Retry
+        86400      ; Expire
+        60         ; Negative Cache TTL
+      )
+      @      IN NS dns.gcp.lab.internal.
+      dns    IN A  ${dns_private_ip}
+      client IN A  ${client_private_ip}
+      web    IN A  ${web_private_ip}
+      router IN A  ${bgp_peer_ip}
+  - path: /etc/bind/named.conf.local
+    permissions: "0644"
+    content: |
+      zone "gcp.lab.internal" {
+        type master;
+        file "/etc/bind/db.gcp.lab.internal";
+      };
+
+      zone "blob.core.windows.net" {
+        type forward;
+        forward only;
+        forwarders { ${resolver_ip}; };
+      };
+
+      zone "privatelink.blob.core.windows.net" {
+        type forward;
+        forward only;
+        forwarders { ${resolver_ip}; };
+      };
+
+      zone "vaultcore.azure.net" {
+        type forward;
+        forward only;
+        forwarders { ${resolver_ip}; };
+      };
+
+      zone "privatelink.vaultcore.azure.net" {
+        type forward;
+        forward only;
+        forwarders { ${resolver_ip}; };
+      };
+
+      zone "azmk8s.io" {
+        type forward;
+        forward only;
+        forwarders { ${resolver_ip}; };
+      };
+
+      zone "azure.lab.internal" {
+        type forward;
+        forward only;
+        forwarders { ${resolver_ip}; };
+      };
+
+      zone "services.ai.azure.com" {
+        type forward;
+        forward only;
+        forwarders { ${resolver_ip}; };
+      };
+
+      zone "privatelink.services.ai.azure.com" {
+        type forward;
+        forward only;
+        forwarders { ${resolver_ip}; };
+      };
+
+      zone "openai.azure.com" {
+        type forward;
+        forward only;
+        forwarders { ${resolver_ip}; };
+      };
+
+      zone "privatelink.openai.azure.com" {
+        type forward;
+        forward only;
+        forwarders { ${resolver_ip}; };
+      };
+
+      zone "cognitiveservices.azure.com" {
+        type forward;
+        forward only;
+        forwarders { ${resolver_ip}; };
+      };
+
+      zone "privatelink.cognitiveservices.azure.com" {
+        type forward;
+        forward only;
+        forwarders { ${resolver_ip}; };
+      };
+  - path: /etc/bind/named.conf.default-zones
+    permissions: "0644"
+    content: |
+      zone "localhost" {
+        type master;
+        file "/etc/bind/db.local";
+      };
+
+      zone "127.in-addr.arpa" {
+        type master;
+        file "/etc/bind/db.127";
+      };
+
+      zone "0.in-addr.arpa" {
+        type master;
+        file "/etc/bind/db.0";
+      };
+
+      zone "255.in-addr.arpa" {
+        type master;
+        file "/etc/bind/db.255";
+      };
+runcmd:
+  - ["named-checkconf", "-z"]
+  - ["named-checkzone", "gcp.lab.internal", "/etc/bind/db.gcp.lab.internal"]
+  - ["systemctl", "enable", "--now", "named"]
+  - ["systemctl", "restart", "named"]

@@ -1,0 +1,234 @@
+#!/bin/bash
+set -euo pipefail
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --VPN_PSK|VPN_PSK)
+      VPN_PSK="$2"
+      shift 2
+      ;;
+    VPN_PSK=*)
+      VPN_PSK="$${1#*=}"
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+if [ -z "$${VPN_PSK:-}" ] && [ ! -s /etc/swanctl/conf.d/west-europe.conf ]; then
+  echo "VPN_PSK protected parameter is required" >&2
+  exit 1
+fi
+
+if command -v cloud-init >/dev/null 2>&1; then
+  cloud-init status --wait || true
+fi
+
+export DEBIAN_FRONTEND=noninteractive
+if ! command -v swanctl >/dev/null 2>&1 || ! [ -x /usr/lib/frr/frrinit.sh ]; then
+  apt-get update -q
+  apt-get install -y -q strongswan strongswan-swanctl libcharon-extra-plugins frr iptables iproute2 tcpdump traceroute bind9-dnsutils jq
+fi
+
+cat >/etc/sysctl.d/99-lab-router.conf <<'EOF'
+net.ipv4.ip_forward = 1
+net.ipv4.conf.all.rp_filter = 0
+net.ipv4.conf.default.rp_filter = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+EOF
+
+cat >/etc/strongswan.d/charon-xfrm.conf <<'EOF'
+charon {
+  install_routes = no
+  install_virtual_ip = no
+}
+EOF
+
+cat >/usr/local/sbin/setup-lab-xfrm <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+ROUTER_PRIVATE_IP="${router_private_ip}"
+BGP_PEER_IP="${bgp_peer_ip}"
+ROUTER_GATEWAY_IP="${router_gateway_ip}"
+CLIENT_SUBNET_CIDR="${client_subnet_cidr}"
+WEST_VPN_BGP_IP="${west_vpn_bgp_ip}"
+XFRM_IF_ID=42
+
+PRIMARY_IF=$(ip -o -4 addr show | awk -v ip="$${ROUTER_PRIVATE_IP}/" '$4 ~ "^"ip {print $2; exit}')
+PRIMARY_IF="$${PRIMARY_IF:-eth0}"
+
+sysctl -w net.ipv4.ip_forward=1 >/dev/null
+sysctl -w net.ipv4.conf.all.rp_filter=0 >/dev/null
+sysctl -w net.ipv4.conf.default.rp_filter=0 >/dev/null
+sysctl -w "net.ipv4.conf.$${PRIMARY_IF}.rp_filter=0" >/dev/null
+sysctl -w net.ipv4.conf.all.send_redirects=0 >/dev/null
+sysctl -w net.ipv4.conf.default.send_redirects=0 >/dev/null
+sysctl -w "net.ipv4.conf.$${PRIMARY_IF}.send_redirects=0" >/dev/null
+sysctl -w net.ipv4.conf.all.accept_redirects=0 >/dev/null
+sysctl -w net.ipv4.conf.default.accept_redirects=0 >/dev/null
+sysctl -w "net.ipv4.conf.$${PRIMARY_IF}.accept_redirects=0" >/dev/null
+
+if ! ip link show xfrm0 >/dev/null 2>&1; then
+  ip link add xfrm0 type xfrm dev "$${PRIMARY_IF}" if_id "$${XFRM_IF_ID}"
+fi
+ip link set dev xfrm0 mtu 1400 up
+sysctl -w net.ipv4.conf.xfrm0.rp_filter=0 >/dev/null
+sysctl -w net.ipv4.conf.xfrm0.disable_policy=0 >/dev/null
+
+ip addr replace "$${BGP_PEER_IP}/32" dev xfrm0
+ip route replace "$${CLIENT_SUBNET_CIDR}" via "$${ROUTER_GATEWAY_IP}" dev "$${PRIMARY_IF}" proto static metric 10
+ip route replace "$${WEST_VPN_BGP_IP}/32" dev xfrm0 src "$${BGP_PEER_IP}" proto static metric 10
+
+# Translate only resolver-initiated DNS to the local DNS VM; preserve client source IPs.
+for proto in udp tcp; do
+  args=(-s 10.42.2.16/28 -d "${dns_private_ip}/32" -p "$proto" --dport 53 -j SNAT --to-source "$ROUTER_PRIVATE_IP")
+  iptables -t nat -C POSTROUTING "$${args[@]}" 2>/dev/null ||
+    iptables -t nat -A POSTROUTING "$${args[@]}"
+done
+iptables -t mangle -C FORWARD -o xfrm0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null ||   iptables -t mangle -A FORWARD -o xfrm0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+iptables -t mangle -C FORWARD -i xfrm0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null ||   iptables -t mangle -A FORWARD -i xfrm0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+EOF
+chmod 0755 /usr/local/sbin/setup-lab-xfrm
+
+cat >/etc/systemd/system/lab-xfrm.service <<'EOF'
+[Unit]
+Description=Configure route-based XFRM interface and static routes for lab VPN
+After=network-online.target
+Wants=network-online.target
+Before=strongswan-starter.service frr.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/setup-lab-xfrm
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+mkdir -p /etc/swanctl/conf.d
+if [ -n "$${VPN_PSK:-}" ]; then
+umask 077
+cat >/etc/swanctl/conf.d/west-europe.conf <<EOF
+connections {
+  west-europe {
+    version = 2
+    local_addrs = ${router_private_ip}
+    remote_addrs = ${west_vpn_public_ip}
+    proposals = aes256-sha256-modp2048
+    rekey_time = 27000s
+    over_time = 2700s
+    dpd_delay = 30s
+    mobike = no
+    encap = yes
+    local {
+      auth = psk
+      id = ${router_public_ip}
+    }
+    remote {
+      auth = psk
+      id = ${west_vpn_public_ip}
+    }
+    children {
+      west-europe-s2s {
+        local_ts = 0.0.0.0/0
+        remote_ts = 0.0.0.0/0
+        if_id_in = 42
+        if_id_out = 42
+        esp_proposals = aes256-sha256-modp2048
+        life_time = 27000s
+        rekey_time = 24300s
+        rand_time = 2700s
+        start_action = trap|start
+        dpd_action = restart
+        close_action = restart
+      }
+    }
+  }
+}
+
+secrets {
+  ike-west-europe {
+    id-local-pub = ${router_public_ip}
+    id-local-priv = ${router_private_ip}
+    id-remote = ${west_vpn_public_ip}
+    secret = "$${VPN_PSK}"
+  }
+}
+EOF
+chmod 0600 /etc/swanctl/conf.d/west-europe.conf
+fi
+
+mkdir -p /etc/systemd/system/strongswan-starter.service.d
+cat >/etc/systemd/system/strongswan-starter.service.d/swanctl.conf <<'EOF'
+[Service]
+ExecStartPost=/bin/sh -c 'for i in $(seq 1 30); do if /usr/sbin/swanctl --stats >/dev/null 2>&1; then exec /usr/sbin/swanctl --load-all; fi; sleep 1; done; echo "strongSwan VICI did not become responsive" >&2; exit 1'
+EOF
+
+sed -i 's/^bgpd=no/bgpd=yes/' /etc/frr/daemons
+
+cat >/etc/frr/frr.conf <<'EOF'
+frr defaults traditional
+hostname ${site_key}-router
+service integrated-vtysh-config
+!
+ip route ${client_subnet_cidr} ${router_gateway_ip}
+ip route ${bgp_peer_ip}/32 lo
+!
+ip prefix-list LOCAL-OUT seq 10 permit ${client_subnet_cidr}
+ip prefix-list LOCAL-OUT seq 20 permit ${router_subnet_cidr}
+ip prefix-list LOCAL-OUT seq 30 permit ${bgp_peer_ip}/32
+ip prefix-list LOCAL-OUT seq 100 deny 0.0.0.0/0 le 32
+!
+ip prefix-list AZURE-IN seq 10 deny ${local_vnet_cidr} le 32
+ip prefix-list AZURE-IN seq 20 deny ${west_vpn_bgp_ip}/32
+ip prefix-list AZURE-IN seq 30 deny 0.0.0.0/0
+ip prefix-list AZURE-IN seq 100 permit 10.0.0.0/8 le 32
+!
+route-map AZURE-OUT permit 10
+ match ip address prefix-list LOCAL-OUT
+!
+route-map AZURE-IN permit 10
+ match ip address prefix-list AZURE-IN
+!
+router bgp ${local_asn}
+ bgp router-id ${bgp_peer_ip}
+ no bgp ebgp-requires-policy
+ no bgp network import-check
+ neighbor ${west_vpn_bgp_ip} remote-as ${remote_asn}
+ neighbor ${west_vpn_bgp_ip} description west-europe-vpngw
+ neighbor ${west_vpn_bgp_ip} update-source ${bgp_peer_ip}
+ neighbor ${west_vpn_bgp_ip} ebgp-multihop 255
+ neighbor ${west_vpn_bgp_ip} disable-connected-check
+ neighbor ${west_vpn_bgp_ip} timers 10 30
+ !
+ address-family ipv4 unicast
+  network ${client_subnet_cidr}
+  network ${router_subnet_cidr}
+  network ${bgp_peer_ip}/32
+  neighbor ${west_vpn_bgp_ip} soft-reconfiguration inbound
+  neighbor ${west_vpn_bgp_ip} route-map AZURE-IN in
+  neighbor ${west_vpn_bgp_ip} route-map AZURE-OUT out
+ exit-address-family
+exit
+!
+line vty
+!
+EOF
+chown frr:frr /etc/frr/frr.conf
+chmod 0640 /etc/frr/frr.conf
+
+systemctl daemon-reload
+systemctl enable --now lab-xfrm.service
+/usr/local/sbin/setup-lab-xfrm
+systemctl enable --now strongswan-starter.service
+systemctl restart strongswan-starter.service
+swanctl --load-all
+systemctl enable --now frr.service
+systemctl restart frr.service
