@@ -100,6 +100,8 @@ Check for overlap with on-premises and GCP ranges. Size the node, pod, and servi
 
 ## DNS across West Europe, Israel Central, and Sweden Central
 
+![On-premises DNS forwards Blob queries over site-to-site VPN to West Europe (preferred) or Israel Central (fallback). Both Azure resolvers use one shared private DNS zone for all three regions.](./architecture/04-onprem-blob-dns.png)
+
 [Animated diagram: on-premises to Blob private DNS](./architecture/04-onprem-blob-dns.html) — download the HTML file and open it in a browser to replay three example queries through either resolver.
 
 Deploy one Azure DNS Private Resolver in the West Europe DNS spoke and another in Israel Central's DNS spoke. Link **the same Private DNS zone resources** to both resolver VNets: private application zones, the relevant AKS private API zones, and the Private Link zones for Foundry, Blob Storage, and Key Vault. Both resolvers can return the private IP for Sweden Foundry without forwarding the DNS query to Sweden. For Private Link, follow the [service-specific conditional forwarding guidance](https://learn.microsoft.com/en-us/azure/private-link/private-endpoint-dns-integration); where required, forward the service's **public DNS zone** so Azure can follow the public-to-private CNAME chain.
