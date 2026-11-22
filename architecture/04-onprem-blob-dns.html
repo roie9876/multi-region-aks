@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>On-premises to Azure Blob DNS</title>
+<script>
+  (() => {
+    const param = new URLSearchParams(window.location.search).get("scoutTheme");
+    const theme =
+      param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", theme);
+  })();
+</script>
+<style>
+:root {
+  color-scheme: light;
+  --cp-bg: #f7f4ef;
+  --cp-bg-elevated: #fcfbf8;
+  --cp-surface: #ffffff;
+  --cp-surface-soft: #f5f5f5;
+  --cp-border: #dedede;
+  --cp-border-strong: #919191;
+  --cp-text: #242424;
+  --cp-text-muted: #5c5c5c;
+  --cp-text-soft: #6f6f6f;
+  --cp-accent: #b11f4b;
+  --cp-accent-hover: #9a1a41;
+  --cp-accent-soft: rgba(177, 31, 75, 0.08);
+  --cp-accent-fg: #ffffff;
+  --cp-success: #16a34a;
+  --cp-danger: #dc2626;
+  --cp-warning: #f59e0b;
+  --cp-link: #0078d4;
+  --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+  --cp-overlay: rgba(255, 255, 255, 0.8);
+  --cp-panel: rgba(255, 255, 255, 0.86);
+  --cp-panel-strong: rgba(255, 255, 255, 0.96);
+  --cp-sheen: rgba(255, 255, 255, 0.55);
+  --cp-highlight: rgba(177, 31, 75, 0.12);
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --cp-bg: #3d3b3a;
+  --cp-bg-elevated: #343231;
+  --cp-surface: #292929;
+  --cp-surface-soft: #2e2e2e;
+  --cp-border: #474747;
+  --cp-border-strong: #5f5f5f;
+  --cp-text: #dedede;
+  --cp-text-muted: #919191;
+  --cp-text-soft: #b0b0b0;
+  --cp-accent: #fd8ea1;
+  --cp-accent-hover: #fb7b91;
+  --cp-accent-soft: rgba(253, 142, 161, 0.14);
+  --cp-accent-fg: #1a1a1a;
+  --cp-success: #4ade80;
+  --cp-danger: #f87171;
+  --cp-warning: #fbbf24;
+  --cp-link: #4da6ff;
+  --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+  --cp-overlay: rgba(41, 41, 41, 0.88);
+  --cp-panel: rgba(41, 41, 41, 0.72);
+  --cp-panel-strong: rgba(41, 41, 41, 0.96);
+  --cp-sheen: rgba(255, 255, 255, 0.04);
+  --cp-highlight: rgba(253, 142, 161, 0.12);
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--cp-bg); color: var(--cp-text); font: 16px/1.5 "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif; }
+main { max-width: 1160px; margin: auto; padding: 24px 16px; }
+h1, h2, p { margin: 0 0 8px; }
+h1 { line-height: 1.15; }
+a { color: var(--cp-link); }
+code, .mono { font-family: Consolas, "Courier New", Courier, monospace; overflow-wrap: anywhere; }
+.panel { background: var(--cp-surface); border: 1px solid var(--cp-border); border-radius: 16px; padding: 16px; margin: 16px 0; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+button, select { border: 1px solid var(--cp-border-strong); border-radius: 10px; padding: 8px 12px; background: var(--cp-surface); color: var(--cp-text); font: inherit; }
+button { cursor: pointer; }
+button:hover { background: var(--cp-accent-soft); }
+button[aria-pressed="true"] { background: var(--cp-accent); color: var(--cp-accent-fg); border-color: var(--cp-accent); }
+:focus-visible { outline: 2px solid var(--cp-link); outline-offset: 3px; }
+.map { overflow-x: auto; }
+svg { display: block; min-width: 800px; width: 100%; }
+svg text { fill: var(--cp-text); }
+svg .small { font-size: 12px; fill: var(--cp-text-muted); }
+svg .title { font-size: 15px; font-weight: 700; }
+svg .box { fill: var(--cp-surface-soft); stroke: var(--cp-border-strong); }
+svg .vnet { fill: var(--cp-surface); stroke-width: 2; }
+svg .subnet { stroke-dasharray: 5 4; }
+svg .line { fill: none; stroke: var(--cp-border-strong); stroke-width: 2; }
+svg .link { stroke-dasharray: 6 5; }
+svg .active .box, svg .active.box { stroke: var(--cp-accent); stroke-width: 2.5; fill: var(--cp-accent-soft); }
+svg .active.line { stroke: var(--cp-accent); stroke-width: 3; }
+svg .packet rect { fill: var(--cp-accent); }
+svg .packet text { fill: var(--cp-accent-fg); font: bold 13px Consolas, "Courier New", monospace; }
+#answer { font-weight: 600; }
+ol { padding-left: 24px; margin: 8px 0; }
+li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>How on-premises resolves Blob across three Azure regions</h1>
+  <p>One on-premises DNS server. Two regional Azure Private Resolvers over site-to-site VPN. One shared global Private DNS zone.</p>
+  <section class="panel" aria-label="Query controls">
+    <label for="resolver">Simulated forwarder target (manual):</label>
+    <select id="resolver">
+      <option value="we">Preferred: West Europe (10.42.2.4)</option>
+      <option value="il">Fallback: Israel Central (10.42.18.4)</option>
+    </select>
+    <div class="controls" role="group" aria-label="Run a Blob DNS query">
+      <button type="button" data-query="we" aria-pressed="false">Resolve West Europe Blob</button>
+      <button type="button" data-query="se" aria-pressed="false">Resolve Sweden Central Blob</button>
+      <button type="button" data-query="il" aria-pressed="false">Resolve Israel Central Blob</button>
+    </div>
+  </section>
+  <section class="panel map" aria-label="Hybrid DNS topology">
+    <svg viewBox="0 0 1000 642" role="img" aria-labelledby="map-title map-description">
+      <title id="map-title">One on-premises DNS server, two Azure resolvers, three Blob endpoints</title>
+      <desc id="map-description">The on-premises server forwards via either site's VPN gateway and DNS spoke to a resolver inbound endpoint. Both resolver VNets link to the same global Blob private DNS zone. The records point to three regional private endpoint IPs. A DNS query does not reach a storage endpoint.</desc>
+      <path id="vpn-we" class="line" d="M415 503 V458 H245 V410"/>
+      <path id="vpn-il" class="line" d="M585 503 V458 H755 V410"/>
+      <text class="small" x="251" y="449">S2S VPN • UDP/TCP 53</text>
+      <text class="small" x="618" y="449">S2S VPN • UDP/TCP 53</text>
+      <path id="link-we" class="line link" d="M245 278 V239 H405 V206"/>
+      <path id="link-il" class="line link" d="M755 278 V239 H595 V206"/>
+      <text class="small" x="250" y="229">Private DNS VNet link</text>
+      <text class="small" x="622" y="229">Private DNS VNet link</text>
+      <image href="data:image/svg+xml;base64,PHN2ZyBpZD0iYjZmNzRjYTUtM2FlNi00MjZmLTllZjEtOWZmNmJiYWE3ZjFjIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgdmlld0JveD0iMCAwIDE4IDE4Ij48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImJkNzMwNWY4LTg3ODktNDYwMC1hMWYyLTY1OTRlNjBlZWZjYyIgeDE9IjguNTkiIHkxPSItNy43OSIgeDI9IjkuMTIiIHkyPSIyMC4wNSIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPjxzdG9wIG9mZnNldD0iMC4yMiIgc3RvcC1jb2xvcj0iIzMyZDRmNSIgLz48c3RvcCBvZmZzZXQ9IjAuNDciIHN0b3AtY29sb3I9IiMzMWQxZjMiIC8+PHN0b3Agb2Zmc2V0PSIwLjYzIiBzdG9wLWNvbG9yPSIjMmVjOWViIiAvPjxzdG9wIG9mZnNldD0iMC43NyIgc3RvcC1jb2xvcj0iIzI5YmFkZSIgLz48c3RvcCBvZmZzZXQ9IjAuODkiIHN0b3AtY29sb3I9IiMyMmE1Y2IiIC8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMTk4YWIzIiAvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzE5OGFiMyIgLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48dGl0bGU+SWNvbi1uZXR3b3JraW5nLTYzPC90aXRsZT48cGF0aCBkPSJNMTUuMDYsOC42N2gtMVY1LjU5YTUuODEsNS44MSwwLDAsMC0xLjQ5LTMuOTJBNC43OSw0Ljc5LDAsMCwwLDguOTEsMGE0Ljc5LDQuNzksMCwwLDAtMy43LDEuNjdBNS43Myw1LjczLDAsMCwwLDMuNzIsNS41OVY4LjY3SDIuOTFhLjcuNywwLDAsMC0uNjkuNjl2OGEuNy43LDAsMCwwLC42OS42OUgxNS4wNmEuNzEuNzEsMCwwLDAsLjctLjY5VjkuMzZBLjcxLjcxLDAsMCwwLDE1LjA2LDguNjdabS0zLjM3LDBINi4xM1Y1LjU0QTMuMTgsMy4xOCwwLDAsMSw3LDMuMzlhMi41MSwyLjUxLDAsMCwxLDEuODgtLjg2LDIuNTQsMi41NCwwLDAsMSwxLjg5Ljg2LDMuMTksMy4xOSwwLDAsMSwuMzIuNDNoMGEzLDMsMCwwLDEsLjYxLDEuNzFaIiBmaWxsPSJ1cmwoI2JkNzMwNWY4LTg3ODktNDYwMC1hMWYyLTY1OTRlNjBlZWZjYykiIC8+PHBhdGggZD0iTTE1LjA5LDguNjdIMi45MmEuNjYuNjYsMCwwLDAtLjQ0LjE3bDEzLjA1LDlhLjY3LjY3LDAsMCwwLC4yNS0uNTJ2LThBLjcxLjcxLDAsMCwwLDE1LjA5LDguNjdaIiBmaWxsPSIjNTBlNmZmIiAvPjxwYXRoIGQ9Ik0yLjk0LDguNjdIMTUuMWEuNy43LDAsMCwxLC40NS4xN2wtMTMuMDYsOWEuNy43LDAsMCwxLS4yNS0uNTJ2LThBLjcyLjcyLDAsMCwxLDIuOTQsOC42N1oiIGZpbGw9IiNmZmYiIG9wYWNpdHk9IjAuMiIgLz48cGF0aCBkPSJNNy44LDEwLjYsOSw5LjRhLjA3LjA3LDAsMCwxLC4wOSwwbDEuMTksMS4yYS4wNi4wNiwwLDAsMSwwLC4xaC0uN2EuMDYuMDYsMCwwLDAtLjA2LjA2VjEyLjNhLjA2LjA2LDAsMCwxLS4wNi4wNkg4LjY3YS4wNS4wNSwwLDAsMS0uMDYtLjA2VjEwLjc2YS4wNy4wNywwLDAsMC0uMDctLjA2aC0uN0EuMDYuMDYsMCwwLDEsNy44LDEwLjZabTIuNDcsNS40OEw5LjA4LDE3LjI3YS4wNi4wNiwwLDAsMS0uMDksMEw3LjgsMTYuMDhhLjA2LjA2LDAsMCwxLDAtLjFoLjdhLjA3LjA3LDAsMCwwLC4wNy0uMDZWMTQuMzdhLjA2LjA2LDAsMCwxLC4wNi0uMDZoLjc0YS4wNi4wNiwwLDAsMSwuMDYuMDZ2MS41NWEuMDYuMDYsMCwwLDAsLjA2LjA2aC43QS4wNi4wNiwwLDAsMSwxMC4yNywxNi4wOFptLTQuNy0xLjU1di0uN2EuMDYuMDYsMCwwLDAtLjA2LS4wNkg0YS4wNi4wNiwwLDAsMS0uMDYtLjA2VjEzQS4wNi4wNiwwLDAsMSw0LDEyLjkxSDUuNTFhLjA2LjA2LDAsMCwwLC4wNi0uMDZ2LS43YS4wNy4wNywwLDAsMSwuMTEtLjA1bDEuMTksMS4yYS4wNi4wNiwwLDAsMSwwLC4wOGwtMS4xOSwxLjJBLjA3LjA3LDAsMCwxLDUuNTcsMTQuNTNabTYuOTMtMi4zOHYuN2EuMDYuMDYsMCwwLDAsLjA2LjA2SDE0LjFzLjA3LDAsLjA3LjA2di43NGEuMDcuMDcsMCwwLDEtLjA3LjA2SDEyLjU2YS4wNi4wNiwwLDAsMC0uMDYuMDZ2LjdhLjA2LjA2LDAsMCwxLS4xLjA1bC0xLjE5LTEuMmEwLDAsMCwwLDEsMC0uMDhsMS4xOS0xLjJTMTIuNSwxMi4wOSwxMi41LDEyLjE1WiIgZmlsbD0iI2ZmZiIgLz48L3N2Zz4=" x="229" y="416" width="32" height="28"/>
+      <image href="data:image/svg+xml;base64,PHN2ZyBpZD0iYjZmNzRjYTUtM2FlNi00MjZmLTllZjEtOWZmNmJiYWE3ZjFjIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgdmlld0JveD0iMCAwIDE4IDE4Ij48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImJkNzMwNWY4LTg3ODktNDYwMC1hMWYyLTY1OTRlNjBlZWZjYyIgeDE9IjguNTkiIHkxPSItNy43OSIgeDI9IjkuMTIiIHkyPSIyMC4wNSIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPjxzdG9wIG9mZnNldD0iMC4yMiIgc3RvcC1jb2xvcj0iIzMyZDRmNSIgLz48c3RvcCBvZmZzZXQ9IjAuNDciIHN0b3AtY29sb3I9IiMzMWQxZjMiIC8+PHN0b3Agb2Zmc2V0PSIwLjYzIiBzdG9wLWNvbG9yPSIjMmVjOWViIiAvPjxzdG9wIG9mZnNldD0iMC43NyIgc3RvcC1jb2xvcj0iIzI5YmFkZSIgLz48c3RvcCBvZmZzZXQ9IjAuODkiIHN0b3AtY29sb3I9IiMyMmE1Y2IiIC8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMTk4YWIzIiAvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzE5OGFiMyIgLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48dGl0bGU+SWNvbi1uZXR3b3JraW5nLTYzPC90aXRsZT48cGF0aCBkPSJNMTUuMDYsOC42N2gtMVY1LjU5YTUuODEsNS44MSwwLDAsMC0xLjQ5LTMuOTJBNC43OSw0Ljc5LDAsMCwwLDguOTEsMGE0Ljc5LDQuNzksMCwwLDAtMy43LDEuNjdBNS43Myw1LjczLDAsMCwwLDMuNzIsNS41OVY4LjY3SDIuOTFhLjcuNywwLDAsMC0uNjkuNjl2OGEuNy43LDAsMCwwLC42OS42OUgxNS4wNmEuNzEuNzEsMCwwLDAsLjctLjY5VjkuMzZBLjcxLjcxLDAsMCwwLDE1LjA2LDguNjdabS0zLjM3LDBINi4xM1Y1LjU0QTMuMTgsMy4xOCwwLDAsMSw3LDMuMzlhMi41MSwyLjUxLDAsMCwxLDEuODgtLjg2LDIuNTQsMi41NCwwLDAsMSwxLjg5Ljg2LDMuMTksMy4xOSwwLDAsMSwuMzIuNDNoMGEzLDMsMCwwLDEsLjYxLDEuNzFaIiBmaWxsPSJ1cmwoI2JkNzMwNWY4LTg3ODktNDYwMC1hMWYyLTY1OTRlNjBlZWZjYykiIC8+PHBhdGggZD0iTTE1LjA5LDguNjdIMi45MmEuNjYuNjYsMCwwLDAtLjQ0LjE3bDEzLjA1LDlhLjY3LjY3LDAsMCwwLC4yNS0uNTJ2LThBLjcxLjcxLDAsMCwwLDE1LjA5LDguNjdaIiBmaWxsPSIjNTBlNmZmIiAvPjxwYXRoIGQ9Ik0yLjk0LDguNjdIMTUuMWEuNy43LDAsMCwxLC40NS4xN2wtMTMuMDYsOWEuNy43LDAsMCwxLS4yNS0uNTJ2LThBLjcyLjcyLDAsMCwxLDIuOTQsOC42N1oiIGZpbGw9IiNmZmYiIG9wYWNpdHk9IjAuMiIgLz48cGF0aCBkPSJNNy44LDEwLjYsOSw5LjRhLjA3LjA3LDAsMCwxLC4wOSwwbDEuMTksMS4yYS4wNi4wNiwwLDAsMSwwLC4xaC0uN2EuMDYuMDYsMCwwLDAtLjA2LjA2VjEyLjNhLjA2LjA2LDAsMCwxLS4wNi4wNkg4LjY3YS4wNS4wNSwwLDAsMS0uMDYtLjA2VjEwLjc2YS4wNy4wNywwLDAsMC0uMDctLjA2aC0uN0EuMDYuMDYsMCwwLDEsNy44LDEwLjZabTIuNDcsNS40OEw5LjA4LDE3LjI3YS4wNi4wNiwwLDAsMS0uMDksMEw3LjgsMTYuMDhhLjA2LjA2LDAsMCwxLDAtLjFoLjdhLjA3LjA3LDAsMCwwLC4wNy0uMDZWMTQuMzdhLjA2LjA2LDAsMCwxLC4wNi0uMDZoLjc0YS4wNi4wNiwwLDAsMSwuMDYuMDZ2MS41NWEuMDYuMDYsMCwwLDAsLjA2LjA2aC43QS4wNi4wNiwwLDAsMSwxMC4yNywxNi4wOFptLTQuNy0xLjU1di0uN2EuMDYuMDYsMCwwLDAtLjA2LS4wNkg0YS4wNi4wNiwwLDAsMS0uMDYtLjA2VjEzQS4wNi4wNiwwLDAsMSw0LDEyLjkxSDUuNTFhLjA2LjA2LDAsMCwwLC4wNi0uMDZ2LS43YS4wNy4wNywwLDAsMSwuMTEtLjA1bDEuMTksMS4yYS4wNi4wNiwwLDAsMSwwLC4wOGwtMS4xOSwxLjJBLjA3LjA3LDAsMCwxLDUuNTcsMTQuNTNabTYuOTMtMi4zOHYuN2EuMDYuMDYsMCwwLDAsLjA2LjA2SDE0LjFzLjA3LDAsLjA3LjA2di43NGEuMDcuMDcsMCwwLDEtLjA3LjA2SDEyLjU2YS4wNi4wNiwwLDAsMC0uMDYuMDZ2LjdhLjA2LjA2LDAsMCwxLS4xLjA1bC0xLjE5LTEuMmEwLDAsMCwwLDEsMC0uMDhsMS4xOS0xLjJTMTIuNSwxMi4wOSwxMi41LDEyLjE1WiIgZmlsbD0iI2ZmZiIgLz48L3N2Zz4=" x="739" y="416" width="32" height="28"/>
+      <g id="dns">
+        <rect class="box" x="270" y="503" width="460" height="119" rx="10"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgdmlld0JveD0iMCAwIDE4IDE4Ij48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImI1MGNmNWYxLWM2ZTEtNGYxMS1iOGNjLWFjNTg4M2U1OGIwMyIgeDE9IjUuNzU5IiB5MT0iMC41IiB4Mj0iNS43NTkiIHkyPSIxNi41MjMiIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNiM2IyYjMiIC8+PHN0b3Agb2Zmc2V0PSIwLjM3NSIgc3RvcC1jb2xvcj0iI2FmYWVhZiIgLz48c3RvcCBvZmZzZXQ9IjAuNzYzIiBzdG9wLWNvbG9yPSIjYTJhMmEyIiAvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzk3OTc5NyIgLz48L2xpbmVhckdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0iZTZhNGFlZmUtMDk5Zi00ODIwLTgwYWItMzdkMGE5NzUyY2U0IiB4MT0iMTEuNjc2IiB5MT0iMTcuNSIgeDI9IjExLjY3NiIgeTI9IjguOTAxIiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMDA3OGQ0IiAvPjxzdG9wIG9mZnNldD0iMC4xNTYiIHN0b3AtY29sb3I9IiMxMzgwZGEiIC8+PHN0b3Agb2Zmc2V0PSIwLjUyOCIgc3RvcC1jb2xvcj0iIzNjOTFlNSIgLz48c3RvcCBvZmZzZXQ9IjAuODIyIiBzdG9wLWNvbG9yPSIjNTU5Y2VjIiAvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzVlYTBlZiIgLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48dGl0bGU+TXNQb3J0YWxGeC5iYXNlLmltYWdlcy01NzwvdGl0bGU+PGcgaWQ9ImFiYjU5OGM0LWM4NmEtNDY4ZC05OTg3LTNkNTNkZjJkOWRiOSI+PGc+PHBhdGggZD0iTTEwLjk2LDE1Ljk4YS41NzQuNTc0LDAsMCwxLS42LjU0M2gtOS4yYS41NzQuNTc0LDAsMCwxLS42LS41NDNWMS4wNDNBLjU3NC41NzQsMCwwLDEsMS4xNTguNWg5LjJhLjU3NC41NzQsMCwwLDEsLjYuNTQzWiIgZmlsbD0idXJsKCNiNTBjZjVmMS1jNmUxLTRmMTEtYjhjYy1hYzU4ODNlNThiMDMpIiAvPjxwYXRoIGQ9Ik0yLjA4Niw3LjM1QTEuMTkzLDEuMTkzLDAsMCwxLDMuMjE3LDYuMUg4LjM5NEExLjE5MywxLjE5MywwLDAsMSw5LjUyNSw3LjM1aDBBMS4xOTMsMS4xOTMsMCwwLDEsOC4zOTQsOC42SDMuMjE3QTEuMTkzLDEuMTkzLDAsMCwxLDIuMDg2LDcuMzVaIiBmaWxsPSIjMDAzMDY3IiAvPjxwYXRoIGQ9Ik0yLjA4NiwzLjY0OUExLjE5MywxLjE5MywwLDAsMSwzLjIxNywyLjRIOC4zOTRBMS4xOTMsMS4xOTMsMCwwLDEsOS41MjUsMy42NDloMEExLjE5MywxLjE5MywwLDAsMSw4LjM5NCw0Ljg5NUgzLjIxN0ExLjE5MywxLjE5MywwLDAsMSwyLjA4NiwzLjY0OVoiIGZpbGw9IiMwMDMwNjciIC8+PGNpcmNsZSBjeD0iMy41NDIiIGN5PSIzLjY0OSIgcj0iMC44MzYiIGZpbGw9IiM1MGU2ZmYiIC8+PGNpcmNsZSBjeD0iMy41NDIiIGN5PSI3LjM1IiByPSIwLjgzNiIgZmlsbD0iIzUwZTZmZiIgLz48cGF0aCBkPSJNMTQuODQ5LDEwLjQ4NCwxMS42NzYsOC45LDguMzg4LDEwLjQ4NGwtMS4yLDIuMzV2NC4zODFhLjI4Ni4yODYsMCwwLDAsLjI4Ni4yODVoOC40MDVhLjI4Ni4yODYsMCwwLDAsLjI4Ni0uMjg1VjEyLjgzNFoiIGZpbGw9InVybCgjZTZhNGFlZmUtMDk5Zi00ODIwLTgwYWItMzdkMGE5NzUyY2U0KSIgLz48cGF0aCBkPSJNNi40ODEsMTQuMWEuNDM4LjQzOCwwLDAsMS0uNC0uNjJMNy40OTEsMTAuNGEuNDM5LjQzOSwwLDAsMSwuMTkxLS4ybDMuODU0LTIuMDczYS40MzguNDM4LDAsMCwxLC40MiwwTDE1LjY3NywxMC4yYS40MzQuNDM0LDAsMCwxLC4xNzguMTg3TDE3LjQsMTMuNDY1YS40MzcuNDM3LDAsMSwxLS43ODIuMzkyTDE1LjEzMywxMC45bC0zLjM5NC0xLjg5TDguMjI2LDEwLjksNi44NzksMTMuODQzQS40MzguNDM4LDAsMCwxLDYuNDgxLDE0LjFaIiBmaWxsPSIjNTBlNmZmIiAvPjxyZWN0IHg9IjEwLjc0MiIgeT0iMTEuNDEiIHdpZHRoPSIxLjc4NyIgaGVpZ2h0PSIxLjg3MSIgcng9IjAuMjg1IiBmaWxsPSIjMDA1YmExIiAvPjxnPjxwYXRoIGQ9Ik0xMS42MzUsMTUuOTRsMS43MjgtMS4xNTdhLjI4My4yODMsMCwwLDAtLjE2LS4wNDlIMTAuMDY3YS4yODUuMjg1LDAsMCwwLS4xNi4wNDlaIiBmaWxsPSIjMDA1YmExIiAvPjxwb2x5Z29uIHBvaW50cz0iMTMuNDg4IDE3LjE4IDEzLjQ4OCAxNS4wNTMgMTEuODk5IDE2LjExNyAxMy40ODggMTcuMTgiIGZpbGw9IiMwMDViYTEiIC8+PHBvbHlnb24gcG9pbnRzPSIxMS4zNzEgMTYuMTE3IDkuNzgyIDE1LjA1MyA5Ljc4MiAxNy4xOCAxMS4zNzEgMTYuMTE3IiBmaWxsPSIjMDA1YmExIiAvPjxwb2x5Z29uIHBvaW50cz0iMTMuNDc1IDE3LjUgMTMuNDg4IDE3LjUgMTMuNDg4IDE3LjQ3OSAxMy40NzUgMTcuNSIgZmlsbD0iIzAwNWJhMSIgLz48cG9seWdvbiBwb2ludHM9IjkuNzgyIDE3LjQ3OSA5Ljc4MiAxNy41IDkuNzk2IDE3LjUgOS43ODIgMTcuNDc5IiBmaWxsPSIjMDA1YmExIiAvPjxwb2x5Z29uIHBvaW50cz0iOS44MzMgMTcuNSAxMy40MzcgMTcuNSAxMS42MzUgMTYuMjk0IDkuODMzIDE3LjUiIGZpbGw9IiMwMDViYTEiIC8+PC9nPjwvZz48L2c+PC9zdmc+" x="316" y="522" width="38" height="38"/>
+        <text class="title" x="525" y="533" text-anchor="middle">On-premises client → single DNS server</text>
+        <text class="small" x="525" y="554" text-anchor="middle">Conditional forwarder: blob.core.windows.net</text>
+        <text class="title" x="525" y="579" text-anchor="middle">Preferred: West Europe • 10.42.2.4</text>
+        <text class="title" x="525" y="602" text-anchor="middle">Fallback: Israel Central • 10.42.18.4</text>
+      </g>
+      <g id="resolver-we" transform="translate(0 118)">
+        <rect class="box vnet" x="50" y="160" width="390" height="132" rx="10"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgdmlld0JveD0iMCAwIDE4IDE4Ij48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImUyOGY2ZWYxLWZkMzEtNDc1MS05MTA4LWY5NDcyOWMwZjE2OSIgeDE9IjkuMDQ5IiB5MT0iMS4xOTYiIHgyPSI5LjA0OSIgeTI9IjE2Ljg5MiIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPjxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iIzAwNzhkNCIgLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMwMDViYTEiIC8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PGcgaWQ9ImViMzY5NTZhLTMyMTItNGUwOS1iMDcyLWFlN2NkYjhkZDg3YSI+PGc+PGc+PHBhdGggZD0iTTE2LjQ0NCw4Ljk2OGE3LjM5Miw3LjM5MiwwLDAsMS03LjM5LDcuMzksNy41LDcuNSwwLDAsMS0uOTYtLjA2LDcuMTg0LDcuMTg0LDAsMCwxLTIuODItLjk4bC0uMDgtLjU5LS4wOS0uNy0uMDYtLjQzYS43MzUuNzM1LDAsMCwwLS4yMy0uNDEuNjM4LjYzOCwwLDAsMC0uODMuMDVsLS4yMS4yMS0uMzMuMzNhNy4zMzEsNy4zMzEsMCwwLDEtMS43OC00LjU1LDIuMzQ4LDIuMzQ4LDAsMCwxLS4wMS0uMjYsNy40LDcuNCwwLDAsMSw3LjQtNy40QTcuMjUyLDcuMjUyLDAsMCwxLDEyLjgsMi42bC4wOC42LjEuNjkuMDcuNTFhLjY3Mi42NzIsMCwwLDAsLjE3LjM2LjY0Ny42NDcsMCwwLDAsLjQ0LjE4LjYuNiwwLDAsMCwuNDQtLjE4bC41Ny0uNTdBNy4yNzgsNy4yNzgsMCwwLDEsMTYuNDQ0LDguOTY4WiIgZmlsbD0idXJsKCNlMjhmNmVmMS1mZDMxLTQ3NTEtOTEwOC1mOTQ3MjljMGYxNjkpIiAvPjxwYXRoIGQ9Ik0xNC41MTQsNC43YTEuNDYyLDEuNDYyLDAsMCwwLS4xNi0uMTlsLS4yNS4yNWEuNi42LDAsMCwxLS40NC4xOC42NDcuNjQ3LDAsMCwxLS40NC0uMTgsOC4wNzQsOC4wNzQsMCwwLDEtMS4xNS4zMmwtLjExLjAyLS4wNC0uMTFhOC4xMTUsOC4xMTUsMCwwLDAtLjc5LTEuODhsLS4xNy0uMjkuMzIuMTJhNi4yOTQsNi4yOTQsMCwwLDEsMS43Ljk1bC0uMS0uNjlhNyw3LDAsMCwwLTMuNDEtMS4xNmMtLjEzLDAtLjI4LS4wMS0uNDItLjAxcy0uMy4wMS0uNDIuMDFhNi43MTUsNi43MTUsMCwwLDAtLjkuMTIsNy4wMTYsNy4wMTYsMCwwLDAtMy45LDIuMjNjLS4wOC4xLS4xNy4yLS4yNS4zMWE2Ljg2Niw2Ljg2NiwwLDAsMC0xLjQ3LDQuMjcsMy4wMjcsMy4wMjcsMCwwLDAsLjAyLjQ0LDYuODI5LDYuODI5LDAsMCwwLDEuNDUsMy44M2MuMDYuMDcuMTIuMTQuMTkuMjFsLjIxLS4yMWEuNjM4LjYzOCwwLDAsMSwuODMtLjA1LDEwLjMwOSwxMC4zMDksMCwwLDEsMS4yMi0uMzNsLjExLS4wMy4wMy4xMWE4LjE3OCw4LjE3OCwwLDAsMCwuNzksMS44OGwuMTguM0w2LjgxNCwxNWE2LjMsNi4zLDAsMCwxLTEuNzEtLjk3bC4wOS43YTcuMDE4LDcuMDE4LDAsMCwwLDIuNTQsMS4wNWMuMDcuMDEuMTUuMDMuMjIuMDQuMjIuMDMuNDUuMDYuNjguMDcuMTIuMDEuMjYuMDIuNDIuMDJzLjI5LS4wMS40Mi0uMDJhNy4xMjYsNy4xMjYsMCwwLDAsLjktLjExLDYuOTksNi45OSwwLDAsMCwzLjg5LTIuMjNjLjA4LS4xLjE3LS4yMS4yNi0uMzFhNi44NzcsNi44NzcsMCwwLDAsMS40Ni00LjI3QTYuODA2LDYuODA2LDAsMCwwLDE0LjUxNCw0LjdabS02LjU4LTIuMDQuMDMtLjAzTDgsMi42MThhNy4wNjYsNy4wNjYsMCwwLDEsMS4wNC0uMDgsNy40NTIsNy40NTIsMCwwLDEsMS4wNi4wOGwuMDQuMDEuMDIuMDNhNi4wNiw2LjA2LDAsMCwxLDEuMjYsMi40bC4wNC4xMy0uMTQuMDJhMTUuMDQ1LDE1LjA0NSwwLDAsMS0yLjI3LjE3LDE1LjI4MSwxNS4yODEsMCwwLDEtMi4yOC0uMTdsLS4xMy0uMDIuMDQtLjEzQTUuOTMxLDUuOTMxLDAsMCwxLDcuOTM0LDIuNjU4Wm0tMi4wNyw4LjkyaC4wMnYuMTFjLjAzLjE4LjA3LjM2LjExLjU0bC4wMi4xMi0uMTIuMDJhMTEuNDQ1LDExLjQ0NSwwLDAsMC0xLjc5LjU1bC0uMDkuMDQtLjA2LS4wN0E2LjQ0Myw2LjQ0MywwLDAsMSwyLjY2NCw5LjdhNS44NDYsNS44NDYsMCwwLDEtLjA0LS43Myw2LjQ2NCw2LjQ2NCwwLDAsMSwxLjMzLTMuOTJsLjA2LS4wOC4wOS4wNGExMC42ODgsMTAuNjg4LDAsMCwwLDEuNzkuNTVsLjEyLjAzLS4wMi4xMmExNC44MSwxNC44MSwwLDAsMC0uMzUsMy4yNkExNC45MDksMTQuOTA5LDAsMCwwLDUuODY0LDExLjU3OFptLjE3LTYuNWE5LjA5Miw5LjA5MiwwLDAsMS0xLjUtLjQ0bC0uMTgtLjA2LjEzLS4xNGE2LjQ4MSw2LjQ4MSwwLDAsMSwyLjMzLTEuNWwuMzMtLjEyLS4xOC4yOWE4LjM3MSw4LjM3MSwwLDAsMC0uNzksMS44OGwtLjAzLjExWm0uNDgsNy4xOC0uMDMtLjEyYTE0LjQ3OSwxNC40NzksMCwwLDEtLjMzLTMuMTcsMTQuNTcyLDE0LjU3MiwwLDAsMSwuMzMtMy4xOGwuMDMtLjExLjExLjAyYTE2LjA1MiwxNi4wNTIsMCwwLDAsMi40My4xOSwxNi4xNTQsMTYuMTU0LDAsMCwwLDIuNDMtLjE5bC4xMS0uMDIuMDIuMTFhMTMuOTcsMTMuOTcsMCwwLDEsLjM0LDMuMTgsMTMuODgxLDEzLjg4MSwwLDAsMS0uMzQsMy4xN2wtLjAyLjEyLS4xMS0uMDJhMTQuNzY5LDE0Ljc2OSwwLDAsMC0yLjQzLS4xOSwxNC42ODMsMTQuNjgzLDAsMCwwLTIuNDMuMTlabTMuNjUsMy4wMi0uMDIuMDNIMTAuMWE2LjIsNi4yLDAsMCwxLTEuMDUuMDlBNi4wMzEsNi4wMzEsMCwwLDEsOCwxNS4zMDhsLS4wNC0uMDEtLjAzLS4wM2EzLjE2OCwzLjE2OCwwLDAsMS0uNDYtLjYsNi40MTEsNi40MTEsMCwwLDEtLjY2LTEuMzksMy4xMzYsMy4xMzYsMCwwLDEtLjEzLS40bC0uMDQtLjE0LjEzLS4wMmExNS4zLDE1LjMsMCwwLDEsMi4yOC0uMTYsMTUuMDcxLDE1LjA3MSwwLDAsMSwyLjI3LjE2bC4xNC4wMi0uMDQuMTRBNiw2LDAsMCwxLDEwLjE2NCwxNS4yNzhabTMuNDUtMS43OUE2LjQyMSw2LjQyMSwwLDAsMSwxMS4yODQsMTVsLS4zMi4xMi4xNy0uM2E3LjcsNy43LDAsMCwwLC43OS0xLjg4bC4wNC0uMTEuMTEuMDNhMTAuMTg3LDEwLjE4NywwLDAsMSwxLjUuNDNsLjE3LjA3Wm0uNTMtLjYtLjA1LjA3LS4wOS0uMDRhMTAuODc3LDEwLjg3NywwLDAsMC0xLjgtLjU1bC0uMTItLjAyLjAzLS4xMmExNC45NDQsMTQuOTQ0LDAsMCwwLC4zNS0zLjI2LDE0Ljg3NywxNC44NzcsMCwwLDAtLjM1LTMuMjZsLS4wMy0uMTIuMTItLjAzYTEwLjg3NywxMC44NzcsMCwwLDAsMS44LS41NWwuMDgtLjA0LjA2LjA4YTYuNCw2LjQsMCwwLDEsMCw3Ljg0WiIgZmlsbD0iIzVlYTBlZiIgLz48cGF0aCBkPSJNOS44NDEsMTEuMDcyYy0uMjYzLDAtLjUyNywwLS43OSwwcy0uNTI3LDAtLjc5MSwwYS4yNTQuMjU0LDAsMCwxLS4yNDUtLjMzMmMuMDQxLS4xNDYuNDE3LTEuMzg5LjU2Mi0xLjg2OWExLjA0NSwxLjA0NSwwLDEsMSwuOTQ4LDBjLjE0NS40OC41MiwxLjcyMy41NjIsMS44NjlBLjI1NS4yNTUsMCwwLDEsOS44NDEsMTEuMDcyWiIgZmlsbD0iIzAwMzA2NyIgLz48L2c+PHBhdGggZD0iTTE4LDguOTU4YTguOTQyLDguOTQyLDAsMCwxLTIuNjQsNi4zNi41NzguNTc4LDAsMCwxLS40LjE3LjU2MS41NjEsMCwwLDEtLjQtLjE3LjU2Ny41NjcsMCwwLDEsMC0uOCw3LjgzOSw3LjgzOSwwLDAsMCwyLjMtNS41Niw3Ljc0Myw3Ljc0MywwLDAsMC0yLjE2LTUuNGwtLjkuOWEuMi4yLDAsMCwxLS4zMy0uMTFsLS40Mi0zLjA0YS4xOTIuMTkyLDAsMCwxLC4yMi0uMjJsMy4wNC40MWEuMi4yLDAsMCwxLC4xMS4zNGwtLjkxLjkxQTguOSw4LjksMCwwLDEsMTgsOC45NThabS0xMy4zOSw0LjdhLjIuMiwwLDAsMC0uMzMtLjEybC0uOTEuOTFBNy44NTksNy44NTksMCwwLDEsMy40MzQsMy40YS41NjIuNTYyLDAsMCwwLDAtLjgxLjU2Ny41NjcsMCwwLDAtLjgsMCw5LjAxOCw5LjAxOCwwLDAsMC0uMDYsMTIuNjdsLS45MS45MWEuMTkyLjE5MiwwLDAsMCwuMTEuMzNsMy4wNC40MmEuMi4yLDAsMCwwLC4yMi0uMjNaIiBmaWxsPSIjNTBlNmZmIiAvPjwvZz48L2c+PC9zdmc+" x="391" y="173" width="31" height="31"/>
+        <text class="title" x="70" y="188">West Europe • DNS spoke VNet</text>
+        <text class="small" x="70" y="211">Via West Europe hub VPN Gateway and spoke peering</text>
+        <rect class="box subnet" x="70" y="225" width="350" height="49" rx="6"/>
+        <text x="245" y="246" text-anchor="middle">Private Resolver inbound • 10.42.2.4</text>
+        <text class="small" x="245" y="265" text-anchor="middle">Dedicated delegated inbound subnet</text>
+      </g>
+      <g id="resolver-il" transform="translate(0 118)">
+        <rect class="box vnet" x="560" y="160" width="390" height="132" rx="10"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgdmlld0JveD0iMCAwIDE4IDE4Ij48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImUyOGY2ZWYxLWZkMzEtNDc1MS05MTA4LWY5NDcyOWMwZjE2OSIgeDE9IjkuMDQ5IiB5MT0iMS4xOTYiIHgyPSI5LjA0OSIgeTI9IjE2Ljg5MiIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPjxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iIzAwNzhkNCIgLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMwMDViYTEiIC8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PGcgaWQ9ImViMzY5NTZhLTMyMTItNGUwOS1iMDcyLWFlN2NkYjhkZDg3YSI+PGc+PGc+PHBhdGggZD0iTTE2LjQ0NCw4Ljk2OGE3LjM5Miw3LjM5MiwwLDAsMS03LjM5LDcuMzksNy41LDcuNSwwLDAsMS0uOTYtLjA2LDcuMTg0LDcuMTg0LDAsMCwxLTIuODItLjk4bC0uMDgtLjU5LS4wOS0uNy0uMDYtLjQzYS43MzUuNzM1LDAsMCwwLS4yMy0uNDEuNjM4LjYzOCwwLDAsMC0uODMuMDVsLS4yMS4yMS0uMzMuMzNhNy4zMzEsNy4zMzEsMCwwLDEtMS43OC00LjU1LDIuMzQ4LDIuMzQ4LDAsMCwxLS4wMS0uMjYsNy40LDcuNCwwLDAsMSw3LjQtNy40QTcuMjUyLDcuMjUyLDAsMCwxLDEyLjgsMi42bC4wOC42LjEuNjkuMDcuNTFhLjY3Mi42NzIsMCwwLDAsLjE3LjM2LjY0Ny42NDcsMCwwLDAsLjQ0LjE4LjYuNiwwLDAsMCwuNDQtLjE4bC41Ny0uNTdBNy4yNzgsNy4yNzgsMCwwLDEsMTYuNDQ0LDguOTY4WiIgZmlsbD0idXJsKCNlMjhmNmVmMS1mZDMxLTQ3NTEtOTEwOC1mOTQ3MjljMGYxNjkpIiAvPjxwYXRoIGQ9Ik0xNC41MTQsNC43YTEuNDYyLDEuNDYyLDAsMCwwLS4xNi0uMTlsLS4yNS4yNWEuNi42LDAsMCwxLS40NC4xOC42NDcuNjQ3LDAsMCwxLS40NC0uMTgsOC4wNzQsOC4wNzQsMCwwLDEtMS4xNS4zMmwtLjExLjAyLS4wNC0uMTFhOC4xMTUsOC4xMTUsMCwwLDAtLjc5LTEuODhsLS4xNy0uMjkuMzIuMTJhNi4yOTQsNi4yOTQsMCwwLDEsMS43Ljk1bC0uMS0uNjlhNyw3LDAsMCwwLTMuNDEtMS4xNmMtLjEzLDAtLjI4LS4wMS0uNDItLjAxcy0uMy4wMS0uNDIuMDFhNi43MTUsNi43MTUsMCwwLDAtLjkuMTIsNy4wMTYsNy4wMTYsMCwwLDAtMy45LDIuMjNjLS4wOC4xLS4xNy4yLS4yNS4zMWE2Ljg2Niw2Ljg2NiwwLDAsMC0xLjQ3LDQuMjcsMy4wMjcsMy4wMjcsMCwwLDAsLjAyLjQ0LDYuODI5LDYuODI5LDAsMCwwLDEuNDUsMy44M2MuMDYuMDcuMTIuMTQuMTkuMjFsLjIxLS4yMWEuNjM4LjYzOCwwLDAsMSwuODMtLjA1LDEwLjMwOSwxMC4zMDksMCwwLDEsMS4yMi0uMzNsLjExLS4wMy4wMy4xMWE4LjE3OCw4LjE3OCwwLDAsMCwuNzksMS44OGwuMTguM0w2LjgxNCwxNWE2LjMsNi4zLDAsMCwxLTEuNzEtLjk3bC4wOS43YTcuMDE4LDcuMDE4LDAsMCwwLDIuNTQsMS4wNWMuMDcuMDEuMTUuMDMuMjIuMDQuMjIuMDMuNDUuMDYuNjguMDcuMTIuMDEuMjYuMDIuNDIuMDJzLjI5LS4wMS40Mi0uMDJhNy4xMjYsNy4xMjYsMCwwLDAsLjktLjExLDYuOTksNi45OSwwLDAsMCwzLjg5LTIuMjNjLjA4LS4xLjE3LS4yMS4yNi0uMzFhNi44NzcsNi44NzcsMCwwLDAsMS40Ni00LjI3QTYuODA2LDYuODA2LDAsMCwwLDE0LjUxNCw0LjdabS02LjU4LTIuMDQuMDMtLjAzTDgsMi42MThhNy4wNjYsNy4wNjYsMCwwLDEsMS4wNC0uMDgsNy40NTIsNy40NTIsMCwwLDEsMS4wNi4wOGwuMDQuMDEuMDIuMDNhNi4wNiw2LjA2LDAsMCwxLDEuMjYsMi40bC4wNC4xMy0uMTQuMDJhMTUuMDQ1LDE1LjA0NSwwLDAsMS0yLjI3LjE3LDE1LjI4MSwxNS4yODEsMCwwLDEtMi4yOC0uMTdsLS4xMy0uMDIuMDQtLjEzQTUuOTMxLDUuOTMxLDAsMCwxLDcuOTM0LDIuNjU4Wm0tMi4wNyw4LjkyaC4wMnYuMTFjLjAzLjE4LjA3LjM2LjExLjU0bC4wMi4xMi0uMTIuMDJhMTEuNDQ1LDExLjQ0NSwwLDAsMC0xLjc5LjU1bC0uMDkuMDQtLjA2LS4wN0E2LjQ0Myw2LjQ0MywwLDAsMSwyLjY2NCw5LjdhNS44NDYsNS44NDYsMCwwLDEtLjA0LS43Myw2LjQ2NCw2LjQ2NCwwLDAsMSwxLjMzLTMuOTJsLjA2LS4wOC4wOS4wNGExMC42ODgsMTAuNjg4LDAsMCwwLDEuNzkuNTVsLjEyLjAzLS4wMi4xMmExNC44MSwxNC44MSwwLDAsMC0uMzUsMy4yNkExNC45MDksMTQuOTA5LDAsMCwwLDUuODY0LDExLjU3OFptLjE3LTYuNWE5LjA5Miw5LjA5MiwwLDAsMS0xLjUtLjQ0bC0uMTgtLjA2LjEzLS4xNGE2LjQ4MSw2LjQ4MSwwLDAsMSwyLjMzLTEuNWwuMzMtLjEyLS4xOC4yOWE4LjM3MSw4LjM3MSwwLDAsMC0uNzksMS44OGwtLjAzLjExWm0uNDgsNy4xOC0uMDMtLjEyYTE0LjQ3OSwxNC40NzksMCwwLDEtLjMzLTMuMTcsMTQuNTcyLDE0LjU3MiwwLDAsMSwuMzMtMy4xOGwuMDMtLjExLjExLjAyYTE2LjA1MiwxNi4wNTIsMCwwLDAsMi40My4xOSwxNi4xNTQsMTYuMTU0LDAsMCwwLDIuNDMtLjE5bC4xMS0uMDIuMDIuMTFhMTMuOTcsMTMuOTcsMCwwLDEsLjM0LDMuMTgsMTMuODgxLDEzLjg4MSwwLDAsMS0uMzQsMy4xN2wtLjAyLjEyLS4xMS0uMDJhMTQuNzY5LDE0Ljc2OSwwLDAsMC0yLjQzLS4xOSwxNC42ODMsMTQuNjgzLDAsMCwwLTIuNDMuMTlabTMuNjUsMy4wMi0uMDIuMDNIMTAuMWE2LjIsNi4yLDAsMCwxLTEuMDUuMDlBNi4wMzEsNi4wMzEsMCwwLDEsOCwxNS4zMDhsLS4wNC0uMDEtLjAzLS4wM2EzLjE2OCwzLjE2OCwwLDAsMS0uNDYtLjYsNi40MTEsNi40MTEsMCwwLDEtLjY2LTEuMzksMy4xMzYsMy4xMzYsMCwwLDEtLjEzLS40bC0uMDQtLjE0LjEzLS4wMmExNS4zLDE1LjMsMCwwLDEsMi4yOC0uMTYsMTUuMDcxLDE1LjA3MSwwLDAsMSwyLjI3LjE2bC4xNC4wMi0uMDQuMTRBNiw2LDAsMCwxLDEwLjE2NCwxNS4yNzhabTMuNDUtMS43OUE2LjQyMSw2LjQyMSwwLDAsMSwxMS4yODQsMTVsLS4zMi4xMi4xNy0uM2E3LjcsNy43LDAsMCwwLC43OS0xLjg4bC4wNC0uMTEuMTEuMDNhMTAuMTg3LDEwLjE4NywwLDAsMSwxLjUuNDNsLjE3LjA3Wm0uNTMtLjYtLjA1LjA3LS4wOS0uMDRhMTAuODc3LDEwLjg3NywwLDAsMC0xLjgtLjU1bC0uMTItLjAyLjAzLS4xMmExNC45NDQsMTQuOTQ0LDAsMCwwLC4zNS0zLjI2LDE0Ljg3NywxNC44NzcsMCwwLDAtLjM1LTMuMjZsLS4wMy0uMTIuMTItLjAzYTEwLjg3NywxMC44NzcsMCwwLDAsMS44LS41NWwuMDgtLjA0LjA2LjA4YTYuNCw2LjQsMCwwLDEsMCw3Ljg0WiIgZmlsbD0iIzVlYTBlZiIgLz48cGF0aCBkPSJNOS44NDEsMTEuMDcyYy0uMjYzLDAtLjUyNywwLS43OSwwcy0uNTI3LDAtLjc5MSwwYS4yNTQuMjU0LDAsMCwxLS4yNDUtLjMzMmMuMDQxLS4xNDYuNDE3LTEuMzg5LjU2Mi0xLjg2OWExLjA0NSwxLjA0NSwwLDEsMSwuOTQ4LDBjLjE0NS40OC41MiwxLjcyMy41NjIsMS44NjlBLjI1NS4yNTUsMCwwLDEsOS44NDEsMTEuMDcyWiIgZmlsbD0iIzAwMzA2NyIgLz48L2c+PHBhdGggZD0iTTE4LDguOTU4YTguOTQyLDguOTQyLDAsMCwxLTIuNjQsNi4zNi41NzguNTc4LDAsMCwxLS40LjE3LjU2MS41NjEsMCwwLDEtLjQtLjE3LjU2Ny41NjcsMCwwLDEsMC0uOCw3LjgzOSw3LjgzOSwwLDAsMCwyLjMtNS41Niw3Ljc0Myw3Ljc0MywwLDAsMC0yLjE2LTUuNGwtLjkuOWEuMi4yLDAsMCwxLS4zMy0uMTFsLS40Mi0zLjA0YS4xOTIuMTkyLDAsMCwxLC4yMi0uMjJsMy4wNC40MWEuMi4yLDAsMCwxLC4xMS4zNGwtLjkxLjkxQTguOSw4LjksMCwwLDEsMTgsOC45NThabS0xMy4zOSw0LjdhLjIuMiwwLDAsMC0uMzMtLjEybC0uOTEuOTFBNy44NTksNy44NTksMCwwLDEsMy40MzQsMy40YS41NjIuNTYyLDAsMCwwLDAtLjgxLjU2Ny41NjcsMCwwLDAtLjgsMCw5LjAxOCw5LjAxOCwwLDAsMC0uMDYsMTIuNjdsLS45MS45MWEuMTkyLjE5MiwwLDAsMCwuMTEuMzNsMy4wNC40MmEuMi4yLDAsMCwwLC4yMi0uMjNaIiBmaWxsPSIjNTBlNmZmIiAvPjwvZz48L2c+PC9zdmc+" x="902" y="173" width="31" height="31"/>
+        <text class="title" x="580" y="188">Israel Central • DNS spoke VNet</text>
+        <text class="small" x="580" y="211">Via Israel Central hub VPN Gateway and spoke peering</text>
+        <rect class="box subnet" x="580" y="225" width="350" height="49" rx="6"/>
+        <text x="755" y="246" text-anchor="middle">Private Resolver inbound • 10.42.18.4</text>
+        <text class="small" x="755" y="265" text-anchor="middle">Dedicated delegated inbound subnet</text>
+      </g>
+      <g id="zone">
+        <rect class="box" x="24" y="16" width="952" height="190" rx="10"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyBpZD0iYTU0MmNmMzktMmJhNi00MjA2LTgyNzgtNmE0ZjFjMjQ1MmY1IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgdmlld0JveD0iMCAwIDE4IDE4Ij48ZGVmcz48cmFkaWFsR3JhZGllbnQgaWQ9ImU3NTc5ZjRkLTM2YTMtNDY5My1hNzI2LTdhNjA1MGFjNTY3MSIgY3g9Ii02ODExLjQiIGN5PSI2NzI5LjY5IiByPSIxNyIgZ3JhZGllbnRUcmFuc2Zvcm09Im1hdHJpeCgwLjUsIDAsIDAsIC0wLjUsIDM0MTQuOTEsIDMzNzQuMDUpIiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHN0b3Agb2Zmc2V0PSIwLjE4IiBzdG9wLWNvbG9yPSIjNWVhMGVmIiAvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzAwNzhkNCIgLz48L3JhZGlhbEdyYWRpZW50PjwvZGVmcz48dGl0bGU+SWNvbi1uZXR3b3JraW5nLTY0PC90aXRsZT48cGF0aCBpZD0iZjU3ZTEwNWQtNmQyZC00YWQ3LWI4YzMtYzEwNjg0YzlmOWI4IiBkPSJNMTQuMjEsMTUuNzJBOC41LDguNSwwLDAsMSwzLjc5LDIuMjhsLjA5LS4wNmE4LjUsOC41LDAsMCwxLDEwLjMzLDEzLjUiIGZpbGw9InVybCgjZTc1NzlmNGQtMzZhMy00NjkzLWE3MjYtN2E2MDUwYWM1NjcxKSIgLz48cGF0aCBkPSJNOSwxLjMxQTcuNjksNy42OSwwLDEsMCwxNi42OSw5LDcuNyw3LjcsMCwwLDAsOSwxLjMxWk0xNC4xNSwzLjlBNy4zNyw3LjM3LDAsMCwxLDEyLDQuNyw4LjgzLDguODMsMCwwLDAsMTAuNzUsMiw3LjIsNy4yLDAsMCwxLDE0LjE1LDMuOVpNOSwxLjc0YTYuNTksNi41OSwwLDAsMSwxLjA5LjA5aDBhNy40OCw3LjQ4LDAsMCwxLDEuNTMsMywxNS4xMiwxNS4xMiwwLDAsMS01LjQ1LDBBNy4zOCw3LjM4LDAsMCwxLDcuNjgsMS44OWwwLDBBNy4zNCw3LjM0LDAsMCwxLDksMS43NFpNNywyQTguNzIsOC43MiwwLDAsMCw1LjczLDQuNjhhNS41OCw1LjU4LDAsMCwxLTEuOS0uNzdBNy4zNSw3LjM1LDAsMCwxLDcsMlpNMy43MiwxNGE1LjI3LDUuMjcsMCwwLDEsMS43OC0uNzYsNy4wOCw3LjA4LDAsMCwwLDEuMzUsMi43MkE3LjI1LDcuMjUsMCwwLDEsMy43MiwxNFptNi40MSwyLjJBNy4wOCw3LjA4LDAsMCwxLDksMTYuMjZhNi44Myw2LjgzLDAsMCwxLTEuNDQtLjE1bDAsMGE2LDYsMCwwLDEtMS42Ny0zLDE0LjczLDE0LjczLDAsMCwxLDUuODgsMCw2LDYsMCwwLDEtMS42OSwzWm0uNzMtLjE2YTcuMTMsNy4xMywwLDAsMCwxLjM4LTIuOCw2LjY4LDYuNjgsMCwwLDEsMiwuODNBNy4xMyw3LjEzLDAsMCwxLDEwLjg2LDE2Wm0xLjQ4LTMuMjJjLjA4LS4zNi4xNS0uNzMuMi0xLjEybC0uNDYuMTFjLS4wNS4zMS0uMS42Mi0uMTcuOTFhMTUuMjMsMTUuMjMsMCwwLDAtNi4wOSwwYy0uMDctLjI3LS4xMi0uNTYtLjE3LS44NmEuMjguMjgsMCwwLDEsMC0uMDlsLS40Ni0uMTNhMi4zNiwyLjM2LDAsMCwwLDAsLjI4YzAsLjMyLjExLjYyLjE3LjkxYTUuOSw1LjksMCwwLDAtMiwuODUsNy4yNCw3LjI0LDAsMCwxLC4xMS05LjQsNi4yOSw2LjI5LDAsMCwwLDIuMDguODZjLS4wNy4yNC0uMTMuNS0uMTguNzZzMCwuMjUtLjA4LjM3bC40Ny0uMTEsMC0uMTdjLjA2LS4yNi4xMi0uNTEuMTktLjc1QTE0Ljg5LDE0Ljg5LDAsMCwwLDksNS40OGExNSwxNSwwLDAsMCwyLjc4LS4yNmMuMDcuMjcuMTQuNTYuMi44NWwuNDYuMTFxLS4xMS0uNTQtLjI0LTFhNy43Myw3LjczLDAsMCwwLDIuMy0uOTEsNy4yMiw3LjIyLDAsMCwxLC4wNiw5LjQ5QTcuMjgsNy4yOCwwLDAsMCwxMi4zNCwxMi43OVoiIGZpbGw9IiM1ZWEwZWYiIC8+PHBhdGggZD0iTTMuNjksN2E3LjkyLDcuOTIsMCwwLDEsMS4xNi0uMDgsMi40NCwyLjQ0LDAsMCwxLDEuNzEuNTJBMiwyLDAsMCwxLDcuMTUsOC45YTIuMjEsMi4yMSwwLDAsMS0uNjEsMS42NCwyLjYsMi42LDAsMCwxLTEuODYuNjEsOS4xNyw5LjE3LDAsMCwxLTEtLjA1Wm0uNTUsMy43M2E0LDQsMCwwLDAsLjU1LDBBMS42MiwxLjYyLDAsMCwwLDYuNTgsOC45MiwxLjUsMS41LDAsMCwwLDQuODcsNy4zYTMuMTcsMy4xNywwLDAsMC0uNjMsMFoiIGZpbGw9IiNmZmYiIC8+PHBhdGggZD0iTTcuODYsMTEuMTFWNi45aC41OUw5LjgsOWExMi4xOCwxMi4xOCwwLDAsMSwuNzYsMS4zN2gwYy0uMDUtLjU2LS4wNi0xLjA3LS4wNi0xLjczVjYuOUgxMXY0LjIxaC0uNTVMOS4xMyw5Yy0uMjktLjQ3LS41Ny0xLS43OS0xLjRoMGMwLC41MywwLDEsMCwxLjc0djEuOFoiIGZpbGw9IiNmZmYiIC8+PHBhdGggZD0iTTExLjg5LDEwLjQ1YTIsMiwwLDAsMCwxLC4yN2MuNTYsMCwuODgtLjI5Ljg4LS43MnMtLjIyLS42Mi0uNzktLjgzLTEuMTItLjYtMS4xMi0xLjJhMS4yMiwxLjIyLDAsMCwxLDEuMzctMS4xNCwyLDIsMCwwLDEsLjkzLjJMMTQsNy40OGExLjYzLDEuNjMsMCwwLDAtLjgtLjJjLS41OCwwLS44LjM0LS44LjYzcy4yNi41OS44NC44MSwxLjA4LjYyLDEuMDgsMS4yNC0uNDgsMS4yMS0xLjQ4LDEuMjFhMi4xNiwyLjE2LDAsMCwxLTEuMDctLjI3WiIgZmlsbD0iI2ZmZiIgLz48L3N2Zz4=" x="265" y="36" width="38" height="38"/>
+        <text class="title" x="500" y="49" text-anchor="middle">One global Private DNS zone</text>
+        <text class="mono" x="500" y="71" text-anchor="middle">privatelink.blob.core.windows.net</text>
+        <text class="small" x="500" y="97" text-anchor="middle">A records map names to private endpoint IPs. DNS queries do not go to the storage accounts.</text>
+      </g>
+      <g id="record-we" transform="translate(0 -358)">
+        <rect class="box" x="40" y="470" width="285" height="78" rx="10"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyBpZD0iZjJmMDQzNDktOGFlZS00NDEzLTg0YzktYTkwNTM2MTFiMzE5IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgdmlld0JveD0iMCAwIDE4IDE4Ij48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImFkNGM0Zjk2LTA5YWEtNGY5MS1iYTEwLTVjYjhhZDUzMGY3NCIgeDE9IjkiIHkxPSIxNS44MyIgeDI9IjkiIHkyPSI1Ljc5IiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjYjNiM2IzIiAvPjxzdG9wIG9mZnNldD0iMC4yNiIgc3RvcC1jb2xvcj0iI2MxYzFjMSIgLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNlNmU2ZTYiIC8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHRpdGxlPkljb24tc3RvcmFnZS04NjwvdGl0bGU+PHBhdGggZD0iTS41LDUuNzloMTdhMCwwLDAsMCwxLDAsMHY5LjQ4YS41Ny41NywwLDAsMS0uNTcuNTdIMS4wN2EuNTcuNTcsMCwwLDEtLjU3LS41N1Y1Ljc5QTAsMCwwLDAsMSwuNSw1Ljc5WiIgZmlsbD0idXJsKCNhZDRjNGY5Ni0wOWFhLTRmOTEtYmExMC01Y2I4YWQ1MzBmNzQpIiAvPjxwYXRoIGQ9Ik0xLjA3LDIuMTdIMTYuOTNhLjU3LjU3LDAsMCwxLC41Ny41N1Y1Ljc5YTAsMCwwLDAsMSwwLDBILjVhMCwwLDAsMCwxLDAsMFYyLjczQS41Ny41NywwLDAsMSwxLjA3LDIuMTdaIiBmaWxsPSIjMzdjMmIxIiAvPjxwYXRoIGQ9Ik0yLjgxLDYuODlIMTUuMThhLjI3LjI3LDAsMCwxLC4yNi4yN3YxLjRhLjI3LjI3LDAsMCwxLS4yNi4yN0gyLjgxYS4yNy4yNywwLDAsMS0uMjYtLjI3VjcuMTZBLjI3LjI3LDAsMCwxLDIuODEsNi44OVoiIGZpbGw9IiNmZmYiIC8+PHBhdGggZD0iTTIuODIsOS42OEgxNS4xOWEuMjcuMjcsMCwwLDEsLjI2LjI3djEuNDFhLjI3LjI3LDAsMCwxLS4yNi4yN0gyLjgyYS4yNy4yNywwLDAsMS0uMjYtLjI3VjEwQS4yNy4yNywwLDAsMSwyLjgyLDkuNjhaIiBmaWxsPSIjMzdjMmIxIiAvPjxwYXRoIGQ9Ik0yLjgyLDEyLjVIMTUuMTlhLjI3LjI3LDAsMCwxLC4yNi4yN3YxLjQxYS4yNy4yNywwLDAsMS0uMjYuMjdIMi44MmEuMjcuMjcsMCwwLDEtLjI2LS4yN1YxMi43N0EuMjcuMjcsMCwwLDEsMi44MiwxMi41WiIgZmlsbD0iIzI1ODI3NyIgLz48L3N2Zz4=" x="52" y="495" width="28" height="26"/>
+        <text class="title" x="92" y="497">West Europe Blob</text>
+        <text class="mono" x="92" y="526">labblobwe → 10.42.3.10</text>
+      </g>
+      <g id="record-se" transform="translate(0 -358)">
+        <rect class="box" x="357" y="470" width="286" height="78" rx="10"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyBpZD0iZjJmMDQzNDktOGFlZS00NDEzLTg0YzktYTkwNTM2MTFiMzE5IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgdmlld0JveD0iMCAwIDE4IDE4Ij48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImFkNGM0Zjk2LTA5YWEtNGY5MS1iYTEwLTVjYjhhZDUzMGY3NCIgeDE9IjkiIHkxPSIxNS44MyIgeDI9IjkiIHkyPSI1Ljc5IiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjYjNiM2IzIiAvPjxzdG9wIG9mZnNldD0iMC4yNiIgc3RvcC1jb2xvcj0iI2MxYzFjMSIgLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNlNmU2ZTYiIC8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHRpdGxlPkljb24tc3RvcmFnZS04NjwvdGl0bGU+PHBhdGggZD0iTS41LDUuNzloMTdhMCwwLDAsMCwxLDAsMHY5LjQ4YS41Ny41NywwLDAsMS0uNTcuNTdIMS4wN2EuNTcuNTcsMCwwLDEtLjU3LS41N1Y1Ljc5QTAsMCwwLDAsMSwuNSw1Ljc5WiIgZmlsbD0idXJsKCNhZDRjNGY5Ni0wOWFhLTRmOTEtYmExMC01Y2I4YWQ1MzBmNzQpIiAvPjxwYXRoIGQ9Ik0xLjA3LDIuMTdIMTYuOTNhLjU3LjU3LDAsMCwxLC41Ny41N1Y1Ljc5YTAsMCwwLDAsMSwwLDBILjVhMCwwLDAsMCwxLDAsMFYyLjczQS41Ny41NywwLDAsMSwxLjA3LDIuMTdaIiBmaWxsPSIjMzdjMmIxIiAvPjxwYXRoIGQ9Ik0yLjgxLDYuODlIMTUuMThhLjI3LjI3LDAsMCwxLC4yNi4yN3YxLjRhLjI3LjI3LDAsMCwxLS4yNi4yN0gyLjgxYS4yNy4yNywwLDAsMS0uMjYtLjI3VjcuMTZBLjI3LjI3LDAsMCwxLDIuODEsNi44OVoiIGZpbGw9IiNmZmYiIC8+PHBhdGggZD0iTTIuODIsOS42OEgxNS4xOWEuMjcuMjcsMCwwLDEsLjI2LjI3djEuNDFhLjI3LjI3LDAsMCwxLS4yNi4yN0gyLjgyYS4yNy4yNywwLDAsMS0uMjYtLjI3VjEwQS4yNy4yNywwLDAsMSwyLjgyLDkuNjhaIiBmaWxsPSIjMzdjMmIxIiAvPjxwYXRoIGQ9Ik0yLjgyLDEyLjVIMTUuMTlhLjI3LjI3LDAsMCwxLC4yNi4yN3YxLjQxYS4yNy4yNywwLDAsMS0uMjYuMjdIMi44MmEuMjcuMjcsMCwwLDEtLjI2LS4yN1YxMi43N0EuMjcuMjcsMCwwLDEsMi44MiwxMi41WiIgZmlsbD0iIzI1ODI3NyIgLz48L3N2Zz4=" x="369" y="495" width="28" height="26"/>
+        <text class="title" x="409" y="497">Sweden Central Blob</text>
+        <text class="mono" x="409" y="526">labblobse → 10.44.1.10</text>
+      </g>
+      <g id="record-il" transform="translate(0 -358)">
+        <rect class="box" x="675" y="470" width="285" height="78" rx="10"/>
+        <image href="data:image/svg+xml;base64,PHN2ZyBpZD0iZjJmMDQzNDktOGFlZS00NDEzLTg0YzktYTkwNTM2MTFiMzE5IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgdmlld0JveD0iMCAwIDE4IDE4Ij48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImFkNGM0Zjk2LTA5YWEtNGY5MS1iYTEwLTVjYjhhZDUzMGY3NCIgeDE9IjkiIHkxPSIxNS44MyIgeDI9IjkiIHkyPSI1Ljc5IiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjYjNiM2IzIiAvPjxzdG9wIG9mZnNldD0iMC4yNiIgc3RvcC1jb2xvcj0iI2MxYzFjMSIgLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNlNmU2ZTYiIC8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHRpdGxlPkljb24tc3RvcmFnZS04NjwvdGl0bGU+PHBhdGggZD0iTS41LDUuNzloMTdhMCwwLDAsMCwxLDAsMHY5LjQ4YS41Ny41NywwLDAsMS0uNTcuNTdIMS4wN2EuNTcuNTcsMCwwLDEtLjU3LS41N1Y1Ljc5QTAsMCwwLDAsMSwuNSw1Ljc5WiIgZmlsbD0idXJsKCNhZDRjNGY5Ni0wOWFhLTRmOTEtYmExMC01Y2I4YWQ1MzBmNzQpIiAvPjxwYXRoIGQ9Ik0xLjA3LDIuMTdIMTYuOTNhLjU3LjU3LDAsMCwxLC41Ny41N1Y1Ljc5YTAsMCwwLDAsMSwwLDBILjVhMCwwLDAsMCwxLDAsMFYyLjczQS41Ny41NywwLDAsMSwxLjA3LDIuMTdaIiBmaWxsPSIjMzdjMmIxIiAvPjxwYXRoIGQ9Ik0yLjgxLDYuODlIMTUuMThhLjI3LjI3LDAsMCwxLC4yNi4yN3YxLjRhLjI3LjI3LDAsMCwxLS4yNi4yN0gyLjgxYS4yNy4yNywwLDAsMS0uMjYtLjI3VjcuMTZBLjI3LjI3LDAsMCwxLDIuODEsNi44OVoiIGZpbGw9IiNmZmYiIC8+PHBhdGggZD0iTTIuODIsOS42OEgxNS4xOWEuMjcuMjcsMCwwLDEsLjI2LjI3djEuNDFhLjI3LjI3LDAsMCwxLS4yNi4yN0gyLjgyYS4yNy4yNywwLDAsMS0uMjYtLjI3VjEwQS4yNy4yNywwLDAsMSwyLjgyLDkuNjhaIiBmaWxsPSIjMzdjMmIxIiAvPjxwYXRoIGQ9Ik0yLjgyLDEyLjVIMTUuMTlhLjI3LjI3LDAsMCwxLC4yNi4yN3YxLjQxYS4yNy4yNywwLDAsMS0uMjYuMjdIMi44MmEuMjcuMjcsMCwwLDEtLjI2LS4yN1YxMi43N0EuMjcuMjcsMCwwLDEsMi44MiwxMi41WiIgZmlsbD0iIzI1ODI3NyIgLz48L3N2Zz4=" x="687" y="495" width="28" height="26"/>
+        <text class="title" x="727" y="497">Israel Central Blob</text>
+        <text class="mono" x="727" y="526">labblobil → 10.42.19.10</text>
+      </g>
+      <g id="packet" class="packet" visibility="hidden" aria-hidden="true">
+        <rect x="-149" y="-33" width="298" height="26" rx="6"/>
+        <text x="0" y="-16" text-anchor="middle"></text>
+      </g>
+    </svg>
+    <p><strong>Legend:</strong> Solid = site-to-site VPN carrying the DNS query and reply. Dashed = VNet link granting zone visibility, not a packet path. Highlighted Blob card = matching DNS record.</p>
+  </section>
+  <section class="panel" aria-labelledby="trace-title">
+    <h2 id="trace-title">Query trace</h2>
+    <p id="answer" role="status">Choose a Blob query to see the response.</p>
+    <ol id="trace"></ol>
+  </section>
+  <p><strong>DNS is not connectivity.</strong> After the lookup, the client opens a separate HTTPS connection to the returned private IP. Sweden does not need a resolver for this lookup. Reaching the Sweden private endpoint in this design requires the West Europe–Sweden Global VNet Peering path with verified gateway transit and return routing, or another supported path.</p>
+  <p>This is an offline simulation with example names and IPs. Select Israel Central to replay the fallback path. The diagram does not simulate automatic retry: in production, verify that the on-premises DNS server tries the fallback when West Europe does not respond. Resolver choice is not based on the Blob's region. One on-premises DNS server remains a single point of failure.</p>
+  <p>Adapted from Microsoft's <a href="https://learn.microsoft.com/en-us/azure/dns/tutorial-dns-private-resolver-failover">dual-region Private Resolver design</a> using <a href="https://learn.microsoft.com/en-us/azure/architecture/icons/">official Azure architecture icons</a>. Azure-to-Azure and Azure-to-on-premises are separate follow-up flows.</p>
+</main>
+<script>
+  const records = {
+    we: { name: "labblobwe", ip: "10.42.3.10", region: "West Europe" },
+    se: { name: "labblobse", ip: "10.44.1.10", region: "Sweden Central" },
+    il: { name: "labblobil", ip: "10.42.19.10", region: "Israel Central" }
+  };
+  const resolvers = {
+    we: { region: "West Europe", ip: "10.42.2.4" },
+    il: { region: "Israel Central", ip: "10.42.18.4" }
+  };
+  const target = document.getElementById("resolver");
+  const buttons = [...document.querySelectorAll("[data-query]")];
+  const trace = document.getElementById("trace");
+  const answer = document.getElementById("answer");
+  const packet = document.getElementById("packet");
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  let selected;
+  let playback;
+
+  function movePacket(path, label, reverse, signal) {
+    const distance = path.getTotalLength();
+    packet.querySelector("text").textContent = label;
+    packet.setAttribute("visibility", "visible");
+    return new Promise(resolve => {
+      const start = performance.now();
+      function frame(time) {
+        if (signal.aborted) return resolve();
+        const progress = Math.min(Math.max(time - start, 0) / 1500, 1);
+        const point = path.getPointAtLength(distance * (reverse ? 1 - progress : progress));
+        packet.setAttribute("transform", `translate(${point.x} ${point.y})`);
+        if (progress < 1) requestAnimationFrame(frame);
+        else resolve();
+      }
+      frame(start);
+    });
+  }
+
+  async function runQuery(region) {
+    playback?.abort();
+    playback = new AbortController();
+    const { signal } = playback;
+    selected = region;
+    const { name, ip, region: blobRegion } = records[region];
+    const resolverKey = target.value;
+    const resolver = resolvers[resolverKey];
+    const vpn = document.getElementById(`vpn-${resolverKey}`);
+    const query = `${name}.blob.core.windows.net`;
+    const alias = `${name}.privatelink.blob.core.windows.net`;
+    buttons.forEach(button => button.setAttribute("aria-pressed", String(button.dataset.query === region)));
+    document.querySelectorAll("svg .active").forEach(node => node.classList.remove("active"));
+    packet.setAttribute("visibility", "hidden");
+    const highlight = (...ids) => ids.forEach(id => document.getElementById(id).classList.add("active"));
+    const steps = [
+      `The client asks its existing on-premises DNS server for ${query}.`,
+      `The blob.core.windows.net rule forwards to ${resolver.region} inbound ${resolver.ip} over site-to-site VPN.`,
+      `Azure DNS follows the public CNAME to ${alias}.`,
+      `The resolver VNet link makes the shared private zone visible. Its A record returns ${ip}.`,
+      `The resolver replies to the on-premises DNS server, which returns ${ip} to the client.`
+    ];
+    trace.replaceChildren(...steps.map(step => {
+      const item = document.createElement("li");
+      item.textContent = step;
+      return item;
+    }));
+    const result = `${query} → ${ip} (${blobRegion}), resolved via ${resolver.region}.`;
+    highlight("dns", vpn.id);
+    if (!reducedMotion.matches) {
+      answer.textContent = `1 / Query: ${query} → ${resolver.region}`;
+      await movePacket(vpn, query, false, signal);
+      if (signal.aborted) return;
+    }
+    highlight(`resolver-${resolverKey}`, `link-${resolverKey}`, "zone", `record-${region}`);
+    if (!reducedMotion.matches) {
+      packet.setAttribute("visibility", "hidden");
+      answer.textContent = `2 / Azure DNS follows the CNAME and reads the shared zone: ${ip}`;
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      if (signal.aborted) return;
+      answer.textContent = `3 / Answer: ${ip} → on-premises via the same VPN`;
+      await movePacket(vpn, `A record: ${ip}`, true, signal);
+      if (signal.aborted) return;
+      packet.setAttribute("visibility", "hidden");
+    }
+    answer.textContent = result;
+  }
+  buttons.forEach(button => button.addEventListener("click", () => runQuery(button.dataset.query)));
+  target.addEventListener("change", () => {
+    if (selected) runQuery(selected);
+  });
+</script>
+</body>
+</html>

@@ -100,9 +100,20 @@ Check for overlap with on-premises and GCP ranges. Size the node, pod, and servi
 
 ## DNS across West Europe, Israel Central, and Sweden Central
 
+[Animated diagram: on-premises to Blob private DNS](./architecture/04-onprem-blob-dns.html) — download the HTML file and open it in a browser to replay three example queries through either resolver.
+
 Deploy one Azure DNS Private Resolver in the West Europe DNS spoke and another in Israel Central's DNS spoke. Link **the same Private DNS zone resources** to both resolver VNets: private application zones, the relevant AKS private API zones, and the Private Link zones for Foundry, Blob Storage, and Key Vault. Both resolvers can return the private IP for Sweden Foundry without forwarding the DNS query to Sweden. For Private Link, follow the [service-specific conditional forwarding guidance](https://learn.microsoft.com/en-us/azure/private-link/private-endpoint-dns-integration); where required, forward the service's **public DNS zone** so Azure can follow the public-to-private CNAME chain.
 
 ### Migrate the existing on-premises forwarder
+
+For Blob Storage, configure one `blob.core.windows.net` conditional forwarder on the single on-premises DNS server. The addresses below are illustrative:
+
+| Role during migration | Azure Private Resolver inbound endpoint |
+|---|---|
+| Preferred | West Europe (`10.42.2.4`) |
+| Fallback | Israel Central (`10.42.18.4`) |
+
+Both targets use the same `privatelink.blob.core.windows.net` zone and can resolve Blob accounts in West Europe, Sweden Central, and Israel Central. The fallback is for an unresponsive resolver or VPN path, not for an account hosted in a different region. The animation lets you select the fallback manually; verify automatic retry on your actual DNS server. The single on-premises DNS server remains a single point of failure.
 
 1. **Today:** Clients query the on-premises forwarder, which sends matching Azure queries to the West Europe inbound resolver IP. Leave that path in place.
 2. **Before cutover:** Deploy the Israel inbound endpoint and link the zones to both resolver VNets. Query each endpoint directly over its regional tunnel for names in all three regions. Verify the returned IP and test the actual service separately. Don't add Israel as a target until it answers correctly; an `NXDOMAIN` reply does not reliably trigger failover.
