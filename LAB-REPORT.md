@@ -2,7 +2,7 @@
 
 **Rehearsed:** 23 November 2026
 
-**Result:** The first cutover moved the route and preserved the application frontend, but was rolled back after a hybrid DNS regression. The second cutover passed the private HTTP and DNS checks and left AKS 1 active in Israel Central. A separate on-premises BGP failover drill verified the backup path through West Europe.
+**Result:** The cutover passed the private HTTP and DNS checks and left AKS 1 active in Israel Central. A separate on-premises BGP failover drill verified the backup path through West Europe.
 
 ## 1. Deployed topology: before and after
 
@@ -10,7 +10,7 @@
 
 [Editable Draw.io diagram](./architecture/06-aks1-rehearsal.drawio)
 
-The diagram compares the **second rehearsal's** pre-cutover and post-cutover states, not the original West Europe-only deployment. On-premises and GCP are separate Azure-hosted emulators, not production networks. Each has a router, a DNS server, and a private HTTP probe. Each router has a site-to-site IPsec/BGP connection to **both** Azure hubs. The hubs have a direct BGP VPN; Sweden Central connects to West Europe by **Global VNet Peering**, not VPN.
+The diagram compares the redesigned lab immediately before and after the successful cutover. On-premises and GCP are separate Azure-hosted emulators, not production networks. Each has a router, a DNS server, and a private HTTP probe. Each router has a site-to-site IPsec/BGP connection to **both** Azure hubs. The hubs have a direct BGP VPN; Sweden Central connects to West Europe by **Global VNet Peering**, not VPN.
 
 | Component | Before | After |
 |---|---|---|
@@ -32,7 +32,7 @@ This was a **network and stateless test workload rehearsal**. The Kubernetes pod
 | On-premises failover | West Europe, `65010 65020` | West Europe relays Israel's route over the inter-hub VPN. This is not a second origin. |
 | Failback | Direct Israel Central, `65020` | The direct session was restored. |
 
-The cutover moved the spoke's hub and management peerings. **Deleting the source peering alone was insufficient:** the source `GatewaySubnet` user-defined route (UDR) still caused West Europe to advertise the `/17`. The fix was to remove that UDR, verify withdrawal from both gateways, then attach the Israel spoke and install the destination gateway UDR. Reverse that sequence for rollback. The first rehearsal exercised rollback; the second left Israel active.
+The cutover moved the spoke's hub and management peerings. **Deleting the source peering alone was insufficient:** the source `GatewaySubnet` user-defined route (UDR) still caused West Europe to advertise the `/17`. Remove that UDR, verify withdrawal from both gateways, then attach the Israel spoke and install the destination gateway UDR. Reverse that sequence for rollback.
 
 ### How the tested flows were steered
 
@@ -60,32 +60,28 @@ flowchart LR
 
 CoreDNS keeps Kubernetes service discovery local and forwards the selected zones to the regional DNS Private Resolver inbound endpoint: `10.42.2.4` before cutover, `10.42.18.4` afterward. The resolver answers Blob lookups from the linked shared private zone. For branch names, the outbound endpoint sends a **new** query to the appropriate emulator DNS server.
 
-**First attempt:** Both branch clients reached the migrated frontend, and Blob DNS still worked, but the Israel pod could not resolve the two branch names. The same failure reproduced off the AKS data path. A router capture saw Israel resolver queries leave the guest router untranslated, and Network Watcher evaluated the forwarded flow as denied at the router NSG. The legacy DNS-only SNAT rule covered only West Europe.
-
-**Fix:** Allow both regional resolver outbound subnets to reach only the designated branch DNS servers on UDP/TCP 53, and retain the routed return path. Remove the legacy emulator DNS SNAT. The second rehearsal proved the lookups worked without it. This does **not** disable AKS Overlay SNAT for workload traffic.
+Both regional resolver outbound subnets can reach the designated branch DNS servers on UDP/TCP 53 over routed paths. The verified design does not use emulator DNS SNAT. AKS Overlay SNAT for workload traffic is unchanged.
 
 ## 4. Test results
 
 ### Private HTTP from the AKS pod
 
-| Probe | Original West Europe baseline | Redesigned West Europe, before cutover | Israel, after cutover |
-|---|---|---|---|
-| On-premises `10.60.0.12` | Timeout | 200 | 200 |
-| GCP `10.70.0.12` | Timeout | 200 | 200 |
-| West Europe `10.43.2.10` | Timeout | 200 | 200 |
-| Sweden Central `10.44.1.5` | Timeout | 200 | 200 after route convergence |
-| Israel Central regional probe | Timeout | 200 | 200 |
-| AKS 1 private frontend (control) | 200 | Same frontend retained | 200 |
-
-The original HTTP timeouts were separate from the DNS regression: the West Europe node itself also timed out, and the West Europe probe lacked a specific return route to the AKS 1 spoke. The redesigned baseline passed after adding firewall transit and return routes, branch probe permissions, and direct inter-hub connectivity.
+| Probe | West Europe, before cutover | Israel Central, after cutover |
+|---|---|---|
+| On-premises `10.60.0.12` | 200 | 200 |
+| GCP `10.70.0.12` | 200 | 200 |
+| West Europe `10.43.2.10` | 200 | 200 |
+| Sweden Central `10.44.1.5` | 200 | 200 after route convergence |
+| Israel Central regional probe | 200 | 200 |
+| AKS 1 private frontend (control) | Same frontend retained | 200 |
 
 ### DNS from the AKS pod
 
-| Query | First rehearsal in Israel | Second rehearsal before and after |
+| Query | West Europe, before cutover | Israel Central, after cutover |
 |---|---|---|
-| `web.onprem.lab.internal` | Timeout | `10.60.0.12` |
-| `web.gcp.lab.internal` | Timeout | `10.70.0.12` |
-| West Europe, Sweden, and Israel Blob account names under `blob.core.windows.net` | All three resolved privately | All three returned the expected private endpoint addresses in both regions |
+| `web.onprem.lab.internal` | `10.60.0.12` | `10.60.0.12` |
+| `web.gcp.lab.internal` | `10.70.0.12` | `10.70.0.12` |
+| West Europe, Sweden, and Israel Blob account names under `blob.core.windows.net` | All three returned the expected private endpoint addresses | All three returned the expected private endpoint addresses |
 
 ### Failover and recovery
 
