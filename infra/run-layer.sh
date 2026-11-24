@@ -9,7 +9,7 @@ fi
 root=$1
 action=$2
 case "$root" in
-  west-europe|sweden-workload|emulators|baseline-links|aks1-cutover) ;;
+  west-europe|israel-central|israel-links|sweden-workload|emulators|baseline-links|aks1-cutover) ;;
   *) printf 'Unknown baseline root: %s\n' "$root" >&2; exit 2 ;;
 esac
 

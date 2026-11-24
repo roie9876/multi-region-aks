@@ -85,11 +85,12 @@ ip addr replace "$${BGP_PEER_IP}/32" dev xfrm0
 ip route replace "$${CLIENT_SUBNET_CIDR}" via "$${ROUTER_GATEWAY_IP}" dev "$${PRIMARY_IF}" proto static metric 10
 ip route replace "$${WEST_VPN_BGP_IP}/32" dev xfrm0 src "$${BGP_PEER_IP}" proto static metric 10
 
-# Translate only resolver-initiated DNS to the local DNS VM; preserve client source IPs.
+# Remove the legacy West Europe DNS translation when upgrading existing routers.
 for proto in udp tcp; do
   args=(-s 10.42.2.16/28 -d "${dns_private_ip}/32" -p "$proto" --dport 53 -j SNAT --to-source "$ROUTER_PRIVATE_IP")
-  iptables -t nat -C POSTROUTING "$${args[@]}" 2>/dev/null ||
-    iptables -t nat -A POSTROUTING "$${args[@]}"
+  while iptables -t nat -C POSTROUTING "$${args[@]}" 2>/dev/null; do
+    iptables -t nat -D POSTROUTING "$${args[@]}"
+  done
 done
 iptables -t mangle -C FORWARD -o xfrm0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null ||   iptables -t mangle -A FORWARD -o xfrm0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
 iptables -t mangle -C FORWARD -i xfrm0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null ||   iptables -t mangle -A FORWARD -i xfrm0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
@@ -101,7 +102,8 @@ cat >/etc/systemd/system/lab-xfrm.service <<'EOF'
 Description=Configure route-based XFRM interface and static routes for lab VPN
 After=network-online.target
 Wants=network-online.target
-Before=strongswan-starter.service frr.service
+# FRR starts before network.target; ordering it after network-online creates a cycle.
+Before=strongswan-starter.service
 
 [Service]
 Type=oneshot

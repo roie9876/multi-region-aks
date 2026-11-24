@@ -149,6 +149,61 @@ resource "azurerm_network_security_group" "router" {
   location            = var.location
   tags                = merge(local.tags, { site = each.key })
 
+  # The guest IPsec tunnel does not extend Azure's VirtualNetwork tag to the peer site.
+  security_rule {
+    name                       = "AllowPeerClientTransitOutbound"
+    priority                   = 200
+    direction                  = "Outbound"
+    access                     = "Allow"
+    protocol                   = "*"
+    source_port_range          = "*"
+    destination_port_range     = "*"
+    source_address_prefix      = local.sites[each.key == "onprem" ? "gcp" : "onprem"].client_subnet_cidr
+    destination_address_prefix = each.value.client_subnet_cidr
+  }
+
+  dynamic "security_rule" {
+    for_each = each.key == "onprem" ? [each.value.client_subnet_cidr] : []
+    content {
+      name                       = "AllowIsraelProbeTransitOutbound"
+      priority                   = 210
+      direction                  = "Outbound"
+      access                     = "Allow"
+      protocol                   = "*"
+      source_port_range          = "*"
+      destination_port_range     = "*"
+      source_address_prefix      = "10.42.17.10/32"
+      destination_address_prefix = security_rule.value
+    }
+  }
+
+  dynamic "security_rule" {
+    for_each = { Udp = 220, Tcp = 230 }
+    content {
+      name                       = "AllowRegionalResolver${security_rule.key}Outbound"
+      priority                   = security_rule.value
+      direction                  = "Outbound"
+      access                     = "Allow"
+      protocol                   = security_rule.key
+      source_port_range          = "*"
+      destination_port_range     = "53"
+      source_address_prefixes    = ["10.42.2.16/28", "10.42.18.16/28"]
+      destination_address_prefix = each.value.dns_private_ip
+    }
+  }
+
+  security_rule {
+    name                       = "AllowAks1WebProbeOutbound"
+    priority                   = 240
+    direction                  = "Outbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "80"
+    source_address_prefix      = "10.42.129.0/24"
+    destination_address_prefix = each.value.web_private_ip
+  }
+
   security_rule {
     name                       = "AllowWestEuropeIkeUdp500"
     priority                   = 100

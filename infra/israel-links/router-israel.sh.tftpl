@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+set -euo pipefail
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --VPN_PSK|VPN_PSK) VPN_PSK="$2"; shift 2 ;;
+    VPN_PSK=*) VPN_PSK="$${1#*=}"; shift ;;
+    *) shift ;;
+  esac
+done
+if [[ ! "$${VPN_PSK:-}" =~ ^[[:xdigit:]]{64}$ ]]; then
+  echo 'Missing or invalid protected VPN_PSK parameter' >&2
+  exit 1
+fi
+
+cat >/usr/local/sbin/setup-lab-xfrm-israel <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+uplink=$(ip -o -4 addr show | awk -v ip="${router_ip}" '{split($4, addr, "/"); if (addr[1] == ip) {print $2; exit}}')
+[[ -n "$uplink" ]]
+if ! ip link show xfrm1 >/dev/null 2>&1; then
+  ip link add xfrm1 type xfrm dev "$uplink" if_id 43
+fi
+ip link set dev xfrm1 mtu 1400 up
+sysctl -qw net.ipv4.conf.xfrm1.rp_filter=0
+ip route replace ${israel_bgp_ip}/32 dev xfrm1 src ${router_ip}
+iptables -t mangle -C FORWARD -o xfrm1 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null ||
+  iptables -t mangle -A FORWARD -o xfrm1 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+iptables -t mangle -C FORWARD -i xfrm1 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null ||
+  iptables -t mangle -A FORWARD -i xfrm1 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+EOF
+chmod 0755 /usr/local/sbin/setup-lab-xfrm-israel
+
+cat >/etc/systemd/system/lab-xfrm-israel.service <<'EOF'
+[Unit]
+Description=Initialize the Israel Central lab IPsec interface
+Requires=lab-xfrm.service
+After=lab-xfrm.service
+# Keep FRR out of the network-online dependency chain.
+Before=strongswan-starter.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/setup-lab-xfrm-israel
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable --now lab-xfrm-israel.service
+
+(
+  umask 077
+  cat >/etc/swanctl/conf.d/israel-central.conf <<EOF
+connections {
+  israel-central {
+    version = 2
+    local_addrs = ${router_ip}
+    remote_addrs = ${israel_public_ip}
+    proposals = aes256-sha256-modp2048
+    rekey_time = 27000s
+    dpd_delay = 30s
+    mobike = no
+    encap = yes
+    local {
+      auth = psk
+      id = ${router_public_ip}
+    }
+    remote {
+      auth = psk
+      id = ${israel_public_ip}
+    }
+    children {
+      israel-central-s2s {
+        local_ts = 0.0.0.0/0
+        remote_ts = 0.0.0.0/0
+        if_id_in = 43
+        if_id_out = 43
+        esp_proposals = aes256-sha256-modp2048
+        life_time = 27000s
+        rekey_time = 24300s
+        start_action = trap|start
+        dpd_action = restart
+        close_action = restart
+      }
+    }
+  }
+}
+secrets {
+  ike-israel-central {
+    id-local = ${router_public_ip}
+    id-remote = ${israel_public_ip}
+    secret = "$VPN_PSK"
+  }
+}
+EOF
+)
+unset VPN_PSK
+swanctl --load-creds --noprompt
+swanctl --load-conns
+
+# Leave the Israel peer unfiltered to reproduce the customer cutover scenario.
+vtysh \
+  -c 'configure terminal' \
+  -c 'router bgp ${router_asn}' \
+  -c 'neighbor ${israel_bgp_ip} remote-as ${israel_asn}' \
+  -c 'neighbor ${israel_bgp_ip} description israel-central-vpngw' \
+  -c 'neighbor ${israel_bgp_ip} update-source ${router_ip}' \
+  -c 'neighbor ${israel_bgp_ip} ebgp-multihop 255' \
+  -c 'neighbor ${israel_bgp_ip} disable-connected-check' \
+  -c 'neighbor ${israel_bgp_ip} timers 10 30' \
+  -c 'address-family ipv4 unicast' \
+  -c 'no neighbor ${israel_bgp_ip} route-map ISRAEL-IN in' \
+  -c 'no neighbor ${israel_bgp_ip} route-map ISRAEL-OUT out' \
+  -c 'neighbor ${israel_bgp_ip} activate' \
+  -c 'end' \
+  -c 'write memory'

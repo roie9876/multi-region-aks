@@ -1,0 +1,41 @@
+#cloud-config
+write_files:
+  - path: /var/www/html/index.html
+    permissions: "0644"
+    content: |
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <title>Israel Central</title>
+      </head>
+      <body>
+        <h1>Israel Central</h1>
+      </body>
+      </html>
+  - path: /etc/systemd/system/web-probe-fallback.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Fallback HTTP server for Israel Central probe
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/bin/python3 -m http.server 80 --bind 0.0.0.0 --directory /var/www/html
+      Restart=always
+
+      [Install]
+      WantedBy=multi-user.target
+runcmd:
+  - |
+    set -eux
+    mkdir -p /var/www/html
+    if DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y nginx; then
+      systemctl disable --now web-probe-fallback.service || true
+      systemctl enable --now nginx
+    else
+      systemctl daemon-reload
+      systemctl enable --now web-probe-fallback.service
+    fi

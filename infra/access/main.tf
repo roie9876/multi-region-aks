@@ -26,6 +26,7 @@ data "azurerm_user_assigned_identity" "runner" {
 locals {
   groups = {
     we        = "westeurope"
+    il        = "israelcentral"
     se        = "swedencentral"
     emulators = "swedencentral"
   }
@@ -53,6 +54,31 @@ data "azurerm_virtual_network" "management" {
 
 resource "azurerm_role_assignment" "aks_network_delegation" {
   scope                = azurerm_resource_group.baseline["we"].id
+  role_definition_name = "Role Based Access Control Administrator"
+  principal_id         = data.azurerm_user_assigned_identity.runner.principal_id
+  principal_type       = "ServicePrincipal"
+  condition_version    = "2.0"
+  condition            = <<-CONDITION
+    (
+      (!(ActionMatches{'Microsoft.Authorization/roleAssignments/write'}))
+      OR (
+        @Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {4d97b98b-1d4f-4787-a291-c67834d212e7}
+        AND @Request[Microsoft.Authorization/roleAssignments:PrincipalType] StringEqualsIgnoreCase 'ServicePrincipal'
+      )
+    )
+    AND
+    (
+      (!(ActionMatches{'Microsoft.Authorization/roleAssignments/delete'}))
+      OR (
+        @Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {4d97b98b-1d4f-4787-a291-c67834d212e7}
+        AND @Resource[Microsoft.Authorization/roleAssignments:PrincipalType] StringEqualsIgnoreCase 'ServicePrincipal'
+      )
+    )
+  CONDITION
+}
+
+resource "azurerm_role_assignment" "aks_network_delegation_il" {
+  scope                = azurerm_resource_group.baseline["il"].id
   role_definition_name = "Role Based Access Control Administrator"
   principal_id         = data.azurerm_user_assigned_identity.runner.principal_id
   principal_type       = "ServicePrincipal"

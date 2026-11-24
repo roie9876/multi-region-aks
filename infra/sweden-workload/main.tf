@@ -194,6 +194,33 @@ resource "azurerm_subnet" "endpoints" {
   private_endpoint_network_policies = "Disabled"
 }
 
+variable "west_firewall_private_ip" {
+  type        = string
+  default     = null
+  description = "West Europe firewall next hop for the Sweden web probe return path to active West Europe AKS 1."
+}
+
+resource "azurerm_route_table" "aks1_probe_return" {
+  count                         = var.west_firewall_private_ip == null ? 0 : 1
+  name                          = "rt-${local.name}-aks1-probe-return"
+  resource_group_name           = data.azurerm_resource_group.workload.name
+  location                      = local.location
+  bgp_route_propagation_enabled = true
+
+  route {
+    name                   = "aks1"
+    address_prefix         = "10.42.129.0/24"
+    next_hop_type          = "VirtualAppliance"
+    next_hop_in_ip_address = var.west_firewall_private_ip
+  }
+}
+
+resource "azurerm_subnet_route_table_association" "aks1_probe_return" {
+  count          = var.west_firewall_private_ip == null ? 0 : 1
+  subnet_id      = azurerm_subnet.workloads.id
+  route_table_id = azurerm_route_table.aks1_probe_return[0].id
+}
+
 resource "azurerm_network_security_group" "workloads" {
   name                = "nsg-${local.name}-workloads"
   resource_group_name = data.azurerm_resource_group.workload.name
